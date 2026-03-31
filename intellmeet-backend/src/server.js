@@ -41,6 +41,13 @@ app.get('/api/health', (req, res) => res.send('API is running...'));
 app.use('/api/auth', authRoutes);
 app.use('/api/meetings', meetingRoutes);
 
+// Add this block
+app.get("/", (req, res) => {
+  res.send("IntellMeet Server is Running 🚀");
+});
+
+// ... tumhara baki code (socket.io, server.listen, etc.)
+
 // 4. THE REAL-TIME LOGIC (The Two-Way Street)
 io.on('connection', (socket) => {
     console.log(`🟢 User connected: ${socket.id}`);
