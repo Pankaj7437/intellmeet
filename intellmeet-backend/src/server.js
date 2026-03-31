@@ -2,30 +2,50 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const helmet = require('helmet');
-const connectDB = require('./config/db');
-
-// 1. IMPORT HTTP AND SOCKET.IO
 const http = require('http');
 const { Server } = require('socket.io');
 
+// Relative paths based on your provided folder structure
+const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
 
 dotenv.config();
-connectDB();
 
 const app = express();
-
-// 2. WRAP EXPRESS WITH THE NATIVE HTTP SERVER
 const server = http.createServer(app);
 
-// 3. INITIALIZE SOCKET.IO
-// const io = new Server(server, {
-//     cors: { 
-//         origin: process.env.CLIENT_URL || '*', 
-//         methods: ['GET', 'POST'] 
-//     }
-// });
+// 1. DATABASE CONNECTION
+connectDB();
+
+// 2. MIDDLEWARES
+// Helmet helps secure your app by setting various HTTP headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for easier development/testing of WebRTC
+}));
+
+// CORS must allow your Vercel production URL for Login/Register to work
+app.use(cors({
+  origin: ["https://intellmeet.vercel.app", "http://localhost:5173"],
+  credentials: true
+}));
+
+// Body Parser is required to read registration/login JSON data
+app.use(express.json());
+
+// 3. HEALTH CHECK & LANDING ROUTES
+// This prevents the "Cannot GET /" error on Render
+app.get("/", (req, res) => {
+  res.send("IntellMeet API is Running Successfully 🚀");
+});
+
+app.get('/api/health', (req, res) => res.send('API is healthy...'));
+
+// 4. API ROUTES
+app.use('/api/auth', authRoutes);
+app.use('/api/meetings', meetingRoutes);
+
+// 5. INITIALIZE SOCKET.IO
 const io = new Server(server, {
   cors: {
     origin: ["https://intellmeet.vercel.app", "http://localhost:5173"],
@@ -33,29 +53,15 @@ const io = new Server(server, {
   }
 });
 
-app.use(helmet());
-app.use(cors({ origin: process.env.CLIENT_URL || '*' }));
-app.use(express.json());
-
-app.get('/api/health', (req, res) => res.send('API is running...'));
-app.use('/api/auth', authRoutes);
-app.use('/api/meetings', meetingRoutes);
-
-// Add this block
-app.get("/", (req, res) => {
-  res.send("IntellMeet Server is Running 🚀");
-});
-
-// ... tumhara baki code (socket.io, server.listen, etc.)
-
-// 4. THE REAL-TIME LOGIC (The Two-Way Street)
+// 6. REAL-TIME LOGIC
 io.on('connection', (socket) => {
     console.log(`🟢 User connected: ${socket.id}`);
 
     socket.on('join-room', (roomId) => {
         socket.join(roomId);
+        console.log(`User ${socket.id} joined room: ${roomId}`);
         
-        // Tell everyone else the NEW user's specific socket ID
+        // Notify others in the room
         socket.to(roomId).emit('user-connected', socket.id);
         
         socket.on('send-message', (message) => {
@@ -66,30 +72,28 @@ io.on('connection', (socket) => {
             socket.to(roomId).emit('receive-transcript', { text, sender: socket.id });
         });
 
-        // --- MULTI-USER TARGETED SIGNALING --- //
-        // Instead of broadcasting to the whole room, we route directly to 'data.target'
+        // MULTI-USER TARGETED SIGNALING for WebRTC
         socket.on('offer', (data) => {
-        // Send the offer ONLY to the intended target
-        socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id });
-    });
+            socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id });
+        });
 
-    socket.on('answer', (data) => {
-        // Send the answer ONLY back to the original caller
-        socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id });
-    });
+        socket.on('answer', (data) => {
+            socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id });
+        });
 
-    socket.on('ice-candidate', (data) => {
-        socket.to(data.target).emit('ice-candidate', { candidate: data.candidate, caller: socket.id });
-    });
+        socket.on('ice-candidate', (data) => {
+            socket.to(data.target).emit('ice-candidate', { candidate: data.candidate, caller: socket.id });
+        });
     });
 
     socket.on('disconnect', () => {
         console.log(`🔴 User disconnected: ${socket.id}`);
-        // Optional: tell the room someone left so their video box disappears
     });
 });
 
+// 7. START SERVER
+// Using 0.0.0.0 is mandatory for Render/Cloud deployments
 const PORT = process.env.PORT || 5000;
-
-// 5. CRITICAL CHANGE: Listen with 'server', not 'app'
-server.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT} with WebSockets enabled!`));
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+});
