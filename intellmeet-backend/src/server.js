@@ -20,11 +20,17 @@ const app = express();
 const server = http.createServer(app);
 
 // 3. INITIALIZE SOCKET.IO
+// const io = new Server(server, {
+//     cors: { 
+//         origin: process.env.CLIENT_URL || '*', 
+//         methods: ['GET', 'POST'] 
+//     }
+// });
 const io = new Server(server, {
-    cors: { 
-        origin: process.env.CLIENT_URL || '*', 
-        methods: ['GET', 'POST'] 
-    }
+  cors: {
+    origin: ["https://intellmeet.vercel.app", "http://localhost:5173"],
+    methods: ["GET", "POST"]
+  }
 });
 
 app.use(helmet());
