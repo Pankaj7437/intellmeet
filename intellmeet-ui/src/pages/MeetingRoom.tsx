@@ -366,7 +366,7 @@ export default function MeetingRoom() {
           </div>
         </div>
 
-        <div className="absolute bottom-24 right-4 md:bottom-28 md:right-8 w-24 h-36 md:w-48 md:h-32 bg-slate-950 rounded-xl border-2 border-slate-700 overflow-hidden shadow-2xl z-20 transition-all">
+        <div className="absolute bottom-[calc(6rem+env(safe-area-inset-bottom))] right-4 md:bottom-28 md:right-8 w-24 h-36 md:w-48 md:h-32 bg-slate-950 rounded-xl border-2 border-slate-700 overflow-hidden shadow-2xl z-20 transition-all">
            <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} isMuted={isMuted} isVideoOff={isVideoOff} isLocal={true} />
         </div>
 
@@ -377,7 +377,7 @@ export default function MeetingRoom() {
           </div>
         )}
 
-        <div className="absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-2 md:gap-4 z-10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700 w-max items-center">
+        <div className="absolute bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-2 md:gap-4 z-10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700 w-max items-center">
           
           <button onClick={toggleMute} className={`p-3 md:p-4 rounded-full transition-all duration-200 ${isMuted ? 'bg-red-500 hover:bg-red-600' : 'bg-slate-700 hover:bg-slate-600'}`}>
             {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
