@@ -8,7 +8,6 @@ const peerConnectionConfig = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
 
-// VideoPlayer Component with 'isLocal' prop to prevent audio echo
 const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, isLocal = false }: { stream: MediaStream; name: string; isMuted?: boolean; isVideoOff?: boolean; isLocal?: boolean }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -32,7 +31,6 @@ const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, i
           {name ? name.charAt(0) : 'U'}
         </div>
       ) : (
-        // isLocal forces the HTML video element to mute so you don't hear your own voice
         <video ref={videoRef} autoPlay playsInline muted={isLocal || isMuted} className="h-full w-full object-contain" />
       )}
       
@@ -67,6 +65,7 @@ export default function MeetingRoom() {
   const [layoutMode, setLayoutMode] = useState<'grid' | 'sidebar'>('grid');
   const [pinnedUserId, setPinnedUserId] = useState<string | null>(null);
 
+  // Live Caption Variables
   const [liveCaption, setLiveCaption] = useState('');
   const recognitionRef = useRef<any>(null);
 
@@ -80,7 +79,6 @@ export default function MeetingRoom() {
 
     const setupMedia = async () => {
       let stream: MediaStream;
-      
       let initialMute = localStorage.getItem('intellmeet_isMuted') === 'true';
       let initialVideoOff = localStorage.getItem('intellmeet_isVideoOff') === 'true';
 
@@ -93,7 +91,6 @@ export default function MeetingRoom() {
           initialVideoOff = true;
           if (isMounted) setIsVideoOff(true);
         } catch (vErr) {
-          console.warn("No hardware found. Joining as Viewer.");
           stream = new MediaStream(); 
           initialMute = true;
           initialVideoOff = true;
@@ -172,9 +169,11 @@ export default function MeetingRoom() {
     setupMedia();
 
     newSocket.on('receive-message', (msg: string) => setMessages(prev => [...prev, msg]));
+    
+    // Live Captions Socket Listener
     newSocket.on('receive-transcript', (data: { text: string }) => {
       setLiveCaption(data.text);
-      setTimeout(() => setLiveCaption(''), 3000);
+      setTimeout(() => setLiveCaption(''), 3000); // Clear after 3 seconds
     });
 
     return () => {
@@ -183,6 +182,40 @@ export default function MeetingRoom() {
       Object.values(peersRef.current).forEach(pc => pc.close());
     };
   }, [roomId, userName]); 
+
+  // --- NEW: Speech Recognition Logic for Live Captions ---
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    
+    // Only run if the browser supports it, user is not muted, and mic stream exists
+    if (SpeechRecognition && !isMuted && myStream?.getAudioTracks().length) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognitionRef.current = recognition;
+
+      recognition.onresult = (event: any) => {
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            const transcript = event.results[i][0].transcript;
+            // Send my voice text to others
+            socket?.emit('send-transcript', transcript);
+            // Show it on my own screen too
+            setLiveCaption(transcript);
+            setTimeout(() => setLiveCaption(''), 3000);
+          }
+        }
+      };
+
+      recognition.onend = () => { if (!isMuted) try { recognition.start(); } catch (e) {} };
+      try { recognition.start(); } catch (e) {}
+    }
+    
+    return () => {
+      if (recognitionRef.current) recognitionRef.current.stop();
+    };
+  }, [isMuted, socket, myStream]);
+  // --------------------------------------------------------
 
   const createPeerConnection = (peerId: string, currentSocket: Socket, stream: MediaStream) => {
     const pc = new RTCPeerConnection(peerConnectionConfig);
@@ -310,12 +343,8 @@ export default function MeetingRoom() {
               );
             })}
 
-            {/* Render Grouped "Others" Tile exactly like a video tile */}
             {remainingHiddenCount > 0 && !pinnedUserId && (
-              <div 
-                onClick={() => { setShowSidebar(true); setActiveTab('participants'); }} 
-                className="cursor-pointer transition-transform hover:scale-[1.02] w-full h-full relative min-h-0 min-w-0"
-              >
+              <div onClick={() => { setShowSidebar(true); setActiveTab('participants'); }} className="cursor-pointer transition-transform hover:scale-[1.02] w-full h-full relative min-h-0 min-w-0">
                 <div className="bg-black h-full w-full relative flex items-center justify-center rounded-2xl overflow-hidden group border border-slate-800 shadow-lg">
                   <div className="h-20 w-20 md:h-24 md:w-24 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center font-bold text-slate-300 text-xl md:text-3xl shadow-xl group-hover:bg-slate-700 transition-colors">
                     +{remainingHiddenCount}
@@ -340,6 +369,13 @@ export default function MeetingRoom() {
         <div className="absolute bottom-24 right-4 md:bottom-28 md:right-8 w-24 h-36 md:w-48 md:h-32 bg-slate-950 rounded-xl border-2 border-slate-700 overflow-hidden shadow-2xl z-20 transition-all">
            <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} isMuted={isMuted} isVideoOff={isVideoOff} isLocal={true} />
         </div>
+
+        {/* --- UI OVERLAY FOR LIVE CAPTIONS --- */}
+        {liveCaption && (
+          <div className="absolute bottom-32 md:bottom-36 left-1/2 -translate-x-1/2 bg-black/80 px-4 py-2 md:px-6 md:py-3 rounded-2xl text-center backdrop-blur-md z-20 border border-white/10 shadow-2xl max-w-[90%] md:max-w-[70%] pointer-events-none">
+            <p className="text-white text-xs md:text-base font-medium leading-relaxed">{liveCaption}</p>
+          </div>
+        )}
 
         <div className="absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-2 md:gap-4 z-10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700 w-max items-center">
           
