@@ -9,7 +9,8 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   
-  const setToken = useAuthStore((state) => state.setToken);
+  // Pulling the new setAuth function
+  const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -23,8 +24,10 @@ export default function Register() {
         password,
       });
 
-      // If successful, save token and go to dashboard
-      setToken(response.data.accessToken);
+      // Save both the token and the user object returned by your Node backend
+      const token = response.data.accessToken || response.data.token;
+      setAuth(token, response.data.user);
+      
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Registration failed. Try again.');

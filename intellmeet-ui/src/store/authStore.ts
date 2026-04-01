@@ -1,22 +1,34 @@
 import { create } from 'zustand';
 
+interface User {
+  _id?: string;
+  name?: string;
+  username?: string;
+  email?: string;
+}
+
 interface AuthState {
   token: string | null;
-  setToken: (token: string) => void;
+  user: User | null;
+  setAuth: (token: string, user: User) => void;
   logout: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  // Check if a token already exists in the browser's memory when the app loads
+  // Load initial state from browser storage
   token: localStorage.getItem('token'),
+  user: JSON.parse(localStorage.getItem('user') || 'null'),
   
-  setToken: (token) => {
-    localStorage.setItem('token', token); // Save to browser
-    set({ token }); // Save to Zustand state
+  // Save BOTH token and user profile
+  setAuth: (token, user) => {
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(user)); 
+    set({ token, user });
   },
   
   logout: () => {
     localStorage.removeItem('token');
-    set({ token: null });
+    localStorage.removeItem('user');
+    set({ token: null, user: null });
   },
 }));

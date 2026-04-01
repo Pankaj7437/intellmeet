@@ -1,11 +1,43 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { Mic, MicOff, Video, VideoOff, MonitorUp, MessageSquare } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X } from 'lucide-react';
+import { useAuthStore } from '../store/authStore'; 
 
 const peerConnectionConfig = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
+
+// FIX 1: Safely catch AbortErrors so they don't flood the console
+const VideoPlayer = memo(({ stream, name, isMuted = false }: { stream: MediaStream; name: string; isMuted?: boolean }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const videoElement = videoRef.current;
+    if (videoElement && stream) {
+      videoElement.srcObject = stream;
+      
+      const playPromise = videoElement.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(error => {
+          // Ignore AbortError caused by React rapid re-mounting
+          if (error.name !== 'AbortError') {
+            console.error('Video play error:', error);
+          }
+        });
+      }
+    }
+  }, [stream]);
+
+  return (
+    <div className="bg-black h-full w-full relative flex items-center justify-center rounded-2xl overflow-hidden">
+      <video ref={videoRef} autoPlay playsInline muted={isMuted} className="h-full w-full object-contain" />
+      <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-slate-900/90 backdrop-blur px-2 py-1 md:px-3 rounded-full text-[10px] md:text-xs font-semibold border border-slate-700 text-white truncate max-w-[90%] shadow-lg z-10">
+        {name}
+      </div>
+    </div>
+  );
+});
 
 export default function MeetingRoom() {
   const { roomId } = useParams();
@@ -16,17 +48,21 @@ export default function MeetingRoom() {
   
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
-  const [showChat, setShowChat] = useState(true);
+  const [showChat, setShowChat] = useState(false); 
   
-  const myVideoRef = useRef<HTMLVideoElement>(null);
   const [myStream, setMyStream] = useState<MediaStream | null>(null);
-  
-  // Multi-user peer management
   const peersRef = useRef<{ [key: string]: RTCPeerConnection }>({});
   const [remoteStreams, setRemoteStreams] = useState<{ [key: string]: MediaStream }>({});
   
+  const [peerNames, setPeerNames] = useState<{ [key: string]: string }>({});
   const [liveCaption, setLiveCaption] = useState('');
   const recognitionRef = useRef<any>(null);
+
+  // Lock in the user's name so it doesn't change mid-render
+  const user = useAuthStore((state: any) => state.user);
+  const [userName] = useState(() => user?.name || user?.username || user?.firstName || `Guest-${Math.floor(Math.random() * 1000)}`);
+
+  const [pinnedUserId, setPinnedUserId] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true; 
@@ -34,50 +70,53 @@ export default function MeetingRoom() {
     setSocket(newSocket);
 
     const setupMedia = async () => {
-      let stream: MediaStream | null = null;
+      let stream: MediaStream;
+      
+      // FIX 2: Graceful hardware fallback (allows users without webcams to still join)
       try {
-        // Step 1: Attempt full media access
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       } catch (err) {
-        console.warn("Initial audio/video request failed. Attempting fallback...", err);
+        console.warn("Initial audio/video request failed. Attempting fallback...");
         try {
-          // Step 2: Fallback to video only if mic is blocked/missing
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
           if (isMounted) setIsMuted(true);
         } catch (vErr) {
-          console.error("Total hardware failure:", vErr);
-          if (isMounted) alert("Could not access camera. Please check browser permissions.");
-          return;
+          console.warn("No hardware found. Joining as Viewer.");
+          stream = new MediaStream(); // Creates an empty stream so the app doesn't crash
+          if (isMounted) {
+            setIsMuted(true);
+            setIsVideoOff(true);
+          }
         }
       }
 
-      if (!isMounted || !stream) {
-        stream?.getTracks().forEach(t => t.stop());
-        return;
-      }
+      if (!isMounted || !stream) return;
 
       setMyStream(stream);
-      if (myVideoRef.current) myVideoRef.current.srcObject = stream;
+      newSocket.emit('join-room', { roomId, userName });
 
-      newSocket.emit('join-room', roomId);
-
-      // Targeted Signaling Handlers for Multi-User Support
-      newSocket.on('user-connected', async (newUserId) => {
-        const pc = createPeerConnection(newUserId, newSocket, stream!);
+      newSocket.on('user-connected', async ({ userId, userName: incomingName }) => {
+        setPeerNames(prev => ({ ...prev, [userId]: incomingName }));
+        
+        const pc = createPeerConnection(userId, newSocket, stream!);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        newSocket.emit('offer', { target: newUserId, sdp: offer });
+        newSocket.emit('offer', { target: userId, sdp: offer, userName }); 
       });
 
-      newSocket.on('offer', async (data: { caller: string, sdp: RTCSessionDescriptionInit }) => {
+      newSocket.on('offer', async (data: { caller: string, sdp: RTCSessionDescriptionInit, userName: string }) => {
+        setPeerNames(prev => ({ ...prev, [data.caller]: data.userName }));
+        
         const pc = createPeerConnection(data.caller, newSocket, stream!);
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        newSocket.emit('answer', { target: data.caller, sdp: answer });
+        newSocket.emit('answer', { target: data.caller, sdp: answer, userName }); 
       });
 
-      newSocket.on('answer', async (data: { caller: string, sdp: RTCSessionDescriptionInit }) => {
+      newSocket.on('answer', async (data: { caller: string, sdp: RTCSessionDescriptionInit, userName: string }) => {
+        setPeerNames(prev => ({ ...prev, [data.caller]: data.userName }));
+        
         const pc = peersRef.current[data.caller];
         if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
       });
@@ -85,6 +124,26 @@ export default function MeetingRoom() {
       newSocket.on('ice-candidate', async (data: { caller: string, candidate: RTCIceCandidateInit }) => {
         const pc = peersRef.current[data.caller];
         if (pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+      });
+
+      newSocket.on('user-disconnected', (userId: string) => {
+        if (peersRef.current[userId]) {
+          peersRef.current[userId].close();
+          delete peersRef.current[userId];
+        }
+        setRemoteStreams(prev => {
+          const updatedStreams = { ...prev };
+          delete updatedStreams[userId];
+          return updatedStreams;
+        });
+        setPeerNames(prev => {
+          const updatedNames = { ...prev };
+          delete updatedNames[userId];
+          return updatedNames;
+        });
+        
+        // Use functional state update to prevent dependency cycle
+        setPinnedUserId(prev => prev === userId ? null : prev);
       });
     };
 
@@ -102,9 +161,10 @@ export default function MeetingRoom() {
       newSocket.disconnect();
       Object.values(peersRef.current).forEach(pc => pc.close());
     };
-  }, [roomId]);
+    
+  // FIX 3: Removed `pinnedUserId` from this array so clicking doesn't destroy the WebRTC connection!
+  }, [roomId, userName]); 
 
-  // Clean up tracks on exit
   useEffect(() => {
     return () => {
       myStream?.getTracks().forEach(t => t.stop());
@@ -129,7 +189,6 @@ export default function MeetingRoom() {
     return pc;
   };
 
-  // AI Transcription Engine
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition && !isMuted && myStream?.getAudioTracks().length) {
@@ -155,26 +214,11 @@ export default function MeetingRoom() {
     return () => recognitionRef.current?.stop();
   }, [isMuted, socket, myStream]);
 
-  // SMART TOGGLE: Attempts to rescue mic if it was initially missing
   const toggleMute = async () => {
     if (myStream && myStream.getAudioTracks().length > 0) {
       const audioTrack = myStream.getAudioTracks()[0];
       audioTrack.enabled = !audioTrack.enabled;
       setIsMuted(!audioTrack.enabled);
-    } else {
-      try {
-        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const newTrack = audioStream.getAudioTracks()[0];
-        if (myStream) {
-          myStream.addTrack(newTrack);
-          Object.values(peersRef.current).forEach(pc => {
-            pc.addTrack(newTrack, myStream);
-          });
-          setIsMuted(false);
-        }
-      } catch (err) {
-        alert("Microphone still unavailable. Check system sound settings.");
-      }
     }
   };
 
@@ -189,96 +233,170 @@ export default function MeetingRoom() {
   const sendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (chatInput.trim() && socket) {
-      socket.emit('send-message', chatInput);
+      socket.emit('send-message', `${userName}: ${chatInput}`);
       setChatInput('');
     }
   };
 
+  const handleVideoClick = (id: string) => {
+    setPinnedUserId(prev => prev === id ? null : id);
+  };
+
+  const getGridClasses = (count: number) => {
+    if (count === 1) return 'grid-cols-1 grid-rows-1';
+    if (count === 2) return 'grid-cols-1 grid-rows-2 md:grid-cols-2 md:grid-rows-1'; 
+    if (count <= 4) return 'grid-cols-2 grid-rows-2';  
+    if (count <= 6) return 'grid-cols-2 grid-rows-3 md:grid-cols-3 md:grid-rows-2';   
+    if (count <= 9) return 'grid-cols-3 grid-rows-3';
+    return 'grid-cols-3 grid-rows-4 md:grid-cols-4 md:grid-rows-3';    
+  };
+
   return (
-    <div className="h-screen bg-slate-900 text-white flex flex-col md:flex-row overflow-hidden font-sans">
-      <div className={`flex-1 flex flex-col p-2 md:p-4 relative transition-all ${showChat ? 'md:w-3/4' : 'w-full'}`}>
-        <div className="flex justify-between items-center mb-4 px-2">
-          <h2 className="text-lg md:text-xl font-bold tracking-tight">Room: {roomId}</h2>
+    <div className="h-screen bg-slate-900 text-white flex overflow-hidden font-sans relative">
+      
+      {/* MAIN MEETING AREA */}
+      <div className={`flex-1 flex flex-col p-2 md:p-4 relative transition-all duration-300 ${showChat ? 'md:mr-80' : 'w-full'}`}>
+        
+        {/* Header */}
+        <div className="flex justify-between items-center mb-2 md:mb-4 px-2 z-10">
+          <h2 className="text-base md:text-xl font-bold tracking-tight bg-slate-900/50 backdrop-blur px-3 py-1 rounded-lg">Room: {roomId}</h2>
           <div className="flex gap-2">
-            <button onClick={() => setShowChat(!showChat)} className="md:hidden bg-slate-700 p-2 rounded-lg hover:bg-slate-600 transition">
-              <MessageSquare size={20} />
+            <button onClick={() => setShowChat(!showChat)} className="md:hidden bg-slate-700 p-2 rounded-lg hover:bg-slate-600 transition shadow-lg">
+              <MessageSquare size={18} />
             </button>
             <button 
               onClick={() => { myStream?.getTracks().forEach(t => t.stop()); navigate('/dashboard'); }} 
-              className="bg-red-600 px-4 py-2 rounded-lg font-bold hover:bg-red-700 transition shadow-lg"
+              className="bg-red-600 px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded-lg font-bold hover:bg-red-700 transition shadow-lg"
             >
-              Leave Meeting
+              Leave
             </button>
           </div>
         </div>
         
-        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4 overflow-y-auto pb-24">
-          {/* Local Feed */}
-          <div className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden relative shadow-2xl min-h-[220px]">
-            <video ref={myVideoRef} autoPlay muted playsInline className={`h-full w-full object-cover transition-opacity duration-300 ${isVideoOff ? 'opacity-0' : 'opacity-100'}`} />
-            {isVideoOff && (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-900">
-                <div className="h-20 w-20 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-2xl font-bold text-slate-400">Me</div>
-              </div>
-            )}
-            <div className="absolute bottom-3 left-3 bg-slate-900/90 backdrop-blur px-3 py-1 rounded-full text-xs font-semibold border border-slate-700">You</div>
-          </div>
-
-          {/* Remote Feeds */}
-          {Object.entries(remoteStreams).map(([id, stream]) => (
-            <div key={id} className="bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden relative shadow-2xl min-h-[220px]">
-               <video autoPlay playsInline className="h-full w-full object-cover" ref={v => { if (v) v.srcObject = stream }} />
-               <div className="absolute bottom-3 left-3 bg-slate-900/90 backdrop-blur px-3 py-1 rounded-full text-xs font-semibold border border-slate-700">Participant</div>
+        {/* Responsive Video Layout Area */}
+        <div className={`flex-1 flex overflow-hidden pb-20 md:pb-24 px-1 md:px-2 gap-2 md:gap-4 min-h-0 ${pinnedUserId ? 'flex-col md:flex-row' : 'flex-col'}`}>
+          
+          {/* Pinned/Enlarged Video */}
+          {pinnedUserId && remoteStreams[pinnedUserId] && (
+            <div 
+              className="w-full md:flex-1 h-[60%] md:h-full rounded-2xl border-2 border-blue-500 shadow-2xl relative cursor-pointer flex-shrink-0 transition-all overflow-hidden bg-black" 
+              onClick={() => handleVideoClick(pinnedUserId)}
+            >
+              <VideoPlayer stream={remoteStreams[pinnedUserId]} name={peerNames[pinnedUserId] || "Participant"} />
+              <div className="absolute top-3 right-3 bg-black/70 backdrop-blur px-2 py-1 rounded text-xs border border-white/20 z-20">Click to shrink</div>
             </div>
-          ))}
+          )}
+
+          {/* Dynamic Grid of participants */}
+          <div className={`
+            grid gap-2 md:gap-4 w-full h-full min-h-0
+            ${pinnedUserId 
+                ? 'grid-cols-3 md:grid-cols-1 w-full md:w-48 lg:w-64 h-[25%] md:h-full flex-shrink-0 overflow-y-auto content-start' 
+                : `${getGridClasses(Object.keys(remoteStreams).length)} flex-1`
+            } 
+          `}>
+            {Object.entries(remoteStreams).map(([id, stream]) => {
+              if (id === pinnedUserId) return null;
+              return (
+                <div key={id} onClick={() => handleVideoClick(id)} className={`cursor-pointer transition-transform hover:scale-[1.02] w-full relative rounded-2xl shadow-lg border border-slate-800 flex items-center justify-center bg-black min-h-0 min-w-0 overflow-hidden ${pinnedUserId ? 'aspect-video md:aspect-auto md:h-32 lg:h-40' : 'h-full'}`}>
+                  <VideoPlayer stream={stream} name={peerNames[id] || "Participant"} />
+                </div>
+              );
+            })}
+            
+            {/* Show an empty state if alone and no one is pinned */}
+            {Object.keys(remoteStreams).length === 0 && !pinnedUserId && (
+               <div className="col-span-full h-full w-full flex flex-col items-center justify-center text-slate-500 bg-slate-800/20 rounded-2xl border border-slate-800/50 min-h-[200px]">
+                  <MonitorUp size={48} className="mb-4 opacity-20 md:opacity-40" />
+                  <p className="text-sm md:text-base text-center px-4">Waiting for others to join...</p>
+               </div>
+            )}
+          </div>
+        </div>
+
+        {/* FLOATING LOCAL VIDEO (PiP) */}
+        <div className="absolute bottom-24 right-4 md:bottom-28 md:right-8 w-24 h-36 md:w-48 md:h-32 bg-slate-950 rounded-xl border-2 border-slate-700 overflow-hidden shadow-2xl z-20 transition-all">
+          {myStream && !isVideoOff && myStream.getVideoTracks().length > 0 ? (
+             <VideoPlayer stream={myStream} name={`${userName} (You)`} isMuted={true} />
+          ) : (
+             <div className="h-full w-full flex items-center justify-center bg-slate-900 relative">
+                <div className="h-10 w-10 md:h-16 md:w-16 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-slate-400 text-xl md:text-3xl uppercase">
+                  {userName ? userName.charAt(0) : 'U'}
+                </div>
+                <div className="absolute bottom-2 left-2 bg-slate-900/90 px-2 py-1 rounded-full text-[10px] font-semibold truncate max-w-[85%]">
+                  {userName} (You)
+                </div>
+             </div>
+          )}
         </div>
 
         {/* AI Transcription Overlay */}
         {liveCaption && (
-          <div className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-black/80 px-6 py-3 rounded-2xl text-center backdrop-blur-md z-20 border border-white/10 shadow-2xl max-w-[80%]">
-            <p className="text-white text-sm md:text-base font-medium leading-relaxed">{liveCaption}</p>
+          <div className="absolute bottom-32 left-1/2 -translate-x-1/2 bg-black/80 px-4 py-2 md:px-6 md:py-3 rounded-2xl text-center backdrop-blur-md z-20 border border-white/10 shadow-2xl max-w-[90%] md:max-w-[80%]">
+            <p className="text-white text-xs md:text-base font-medium leading-relaxed">{liveCaption}</p>
           </div>
         )}
 
         {/* Meeting Controls */}
-        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-8 py-4 rounded-3xl flex gap-6 z-10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700">
-          <button onClick={toggleMute} className={`p-4 rounded-full transition-all duration-200 transform hover:scale-110 ${isMuted ? 'bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)]' : 'bg-slate-700 hover:bg-slate-600'}`}>
-            {isMuted ? <MicOff size={22} /> : <Mic size={22} />}
+        <div className="absolute bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-4 py-2 md:px-8 md:py-4 rounded-full flex gap-3 md:gap-6 z-10 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700 w-max">
+          <button onClick={toggleMute} className={`p-3 md:p-4 rounded-full transition-all duration-200 ${isMuted ? 'bg-red-500' : 'bg-slate-700 hover:bg-slate-600'}`}>
+            {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
           </button>
-          <button onClick={toggleVideo} className={`p-4 rounded-full transition-all duration-200 transform hover:scale-110 ${isVideoOff ? 'bg-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)]' : 'bg-slate-700 hover:bg-slate-600'}`}>
-            {isVideoOff ? <VideoOff size={22} /> : <Video size={22} />}
+          <button onClick={toggleVideo} className={`p-3 md:p-4 rounded-full transition-all duration-200 ${isVideoOff ? 'bg-red-500' : 'bg-slate-700 hover:bg-slate-600'}`}>
+            {isVideoOff ? <VideoOff size={20} /> : <VideoIcon size={20} />}
           </button>
-          <button className="p-4 rounded-full bg-slate-700 hover:bg-slate-600 text-blue-400 transition-all transform hover:scale-110">
-            <MonitorUp size={22} />
+          <button className="p-3 md:p-4 rounded-full bg-slate-700 hover:bg-slate-600 text-blue-400 hidden md:block transition-all">
+            <MonitorUp size={20} />
+          </button>
+          <button onClick={() => setShowChat(!showChat)} className="p-3 md:p-4 rounded-full bg-slate-700 hover:bg-slate-600 hidden md:block transition-all">
+            <MessageSquare size={20} />
           </button>
         </div>
       </div>
 
-      {/* Chat Sidebar */}
-      <div className={`${showChat ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-80 bg-slate-900 border-l border-slate-800 shadow-2xl z-30`}>
-        <div className="p-5 border-b border-slate-800 font-bold text-slate-300 tracking-wide uppercase text-xs">Meeting Chat</div>
-        <div className="flex-1 p-5 overflow-y-auto flex flex-col gap-3 custom-scrollbar">
-          {messages.map((m, i) => (
-            <div key={i} className="bg-slate-800/50 p-3 rounded-2xl text-sm break-words border border-slate-700/50 text-slate-200">
-              {m}
-            </div>
-          ))}
+      {/* CHAT SIDEBAR / MOBILE OVERLAY */}
+      <div className={`
+        ${showChat ? 'translate-x-0' : 'translate-x-full'} 
+        fixed top-0 right-0 h-full w-full md:w-80 bg-slate-900 border-l border-slate-800 shadow-2xl z-50 flex flex-col transition-transform duration-300 ease-in-out
+      `}>
+        <div className="flex justify-between items-center p-4 border-b border-slate-800 bg-slate-950">
+          <span className="font-bold text-slate-300 tracking-wide uppercase text-xs">Meeting Chat</span>
+          <button onClick={() => setShowChat(false)} className="text-slate-400 hover:text-white bg-slate-800 p-1.5 rounded-lg">
+            <X size={18} />
+          </button>
         </div>
-        <form onSubmit={sendMessage} className="p-5 border-t border-slate-800 bg-slate-900/50">
+        
+        <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 custom-scrollbar">
+          {messages.length === 0 ? (
+             <div className="text-center text-slate-500 text-sm mt-10">No messages yet. Say hello!</div>
+          ) : (
+            messages.map((m, i) => {
+              const isMe = m.startsWith(`${userName}:`);
+              return (
+                <div key={i} className={`p-3 rounded-2xl text-sm break-words border ${isMe ? 'bg-blue-900/30 border-blue-800/50 text-blue-100 self-end' : 'bg-slate-800/50 border-slate-700/50 text-slate-200 self-start'} max-w-[90%]`}>
+                  {m}
+                </div>
+              )
+            })
+          )}
+        </div>
+        
+        <form onSubmit={sendMessage} className="p-4 border-t border-slate-800 bg-slate-950 pb-safe">
           <div className="flex gap-2">
             <input 
               type="text" 
               value={chatInput} 
               onChange={e => setChatInput(e.target.value)} 
-              className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600/50 transition-all text-slate-200" 
+              className="flex-1 bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600/50 transition-all text-slate-200" 
               placeholder="Type a message..." 
             />
-            <button type="submit" className="bg-blue-600 px-5 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-900/20 active:scale-95">
+            <button type="submit" className="bg-blue-600 px-4 rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-900/20 active:scale-95 text-sm">
               Send
             </button>
           </div>
         </form>
       </div>
+
     </div>
   );
 }

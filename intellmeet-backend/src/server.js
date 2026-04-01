@@ -57,12 +57,13 @@ const io = new Server(server, {
 io.on('connection', (socket) => {
     console.log(`🟢 User connected: ${socket.id}`);
 
-    socket.on('join-room', (roomId) => {
+    // 1. Accept an object with both roomId and userName
+    socket.on('join-room', ({ roomId, userName }) => {
         socket.join(roomId);
-        console.log(`User ${socket.id} joined room: ${roomId}`);
+        console.log(`User ${socket.id} (${userName}) joined room: ${roomId}`);
         
-        // Notify others in the room
-        socket.to(roomId).emit('user-connected', socket.id);
+        // Notify others with the new user's ID AND Name
+        socket.to(roomId).emit('user-connected', { userId: socket.id, userName });
         
         socket.on('send-message', (message) => {
             io.to(roomId).emit('receive-message', message);
@@ -72,17 +73,26 @@ io.on('connection', (socket) => {
             socket.to(roomId).emit('receive-transcript', { text, sender: socket.id });
         });
 
-        // MULTI-USER TARGETED SIGNALING for WebRTC
+        // MULTI-USER TARGETED SIGNALING for WebRTC (Now passing userName)
         socket.on('offer', (data) => {
-            socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id });
+            socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id, userName: data.userName });
         });
 
         socket.on('answer', (data) => {
-            socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id });
+            socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id, userName: data.userName });
         });
 
         socket.on('ice-candidate', (data) => {
             socket.to(data.target).emit('ice-candidate', { candidate: data.candidate, caller: socket.id });
+        });
+    });
+
+    socket.on('disconnecting', () => {
+        // Notify all rooms this user is in before they actually drop
+        socket.rooms.forEach(roomId => {
+            if (roomId !== socket.id) {
+                socket.to(roomId).emit('user-disconnected', socket.id);
+            }
         });
     });
 

@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
 import { useAuthStore } from '../store/authStore';
-// import { useNavigate } from 'react-router-dom';
 import { useNavigate, Link } from 'react-router-dom';
 
 export default function Login() {
@@ -9,7 +8,8 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   
-  const setToken = useAuthStore((state) => state.setToken);
+  // Pulling the new setAuth function from our updated store
+  const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -17,14 +17,15 @@ export default function Login() {
     setError('');
 
     try {
-      // Send the request to your Node.js backend
       const response = await axios.post(`${import.meta.env.VITE_API_URL}/auth/login`, {
         email,
         password,
       });
 
-      // If successful, save the token and redirect to the dashboard
-      setToken(response.data.accessToken);
+      // Save both the token and the user object returned by your Node backend
+      const token = response.data.accessToken || response.data.token;
+      setAuth(token, response.data.user);
+      
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to login. Check your credentials.');
@@ -47,7 +48,7 @@ export default function Login() {
               onChange={(e) => setEmail(e.target.value)}
               className="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:border-blue-500"
               required
-            />
+            /> 
           </div>
           
           <div>
