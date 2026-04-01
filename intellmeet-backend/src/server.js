@@ -69,6 +69,20 @@ io.on('connection', (socket) => {
             io.to(roomId).emit('receive-message', message);
         });
 
+        // Broadcast when a user mutes/unmutes or turns off camera
+        socket.on('media-status-change', (data) => {
+            socket.to(data.roomId).emit('peer-media-status', {
+                userId: socket.id,
+                isMuted: data.isMuted,
+                isVideoOff: data.isVideoOff
+            });
+        });
+
+        // Broadcast current state to newly joined users
+        socket.on('request-media-status', (targetUserId) => {
+            socket.to(targetUserId).emit('request-media-status-from', socket.id);
+        });
+
         socket.on('send-transcript', (text) => {
             socket.to(roomId).emit('receive-transcript', { text, sender: socket.id });
         });
