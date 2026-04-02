@@ -96,6 +96,31 @@ io.on('connection', (socket) => {
             socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id, userName: data.userName });
         });
 
+        // Broadcast speaking status
+        socket.on('speaking-status', (data) => {
+            socket.to(data.roomId).emit('peer-speaking', {
+                userId: socket.id,
+                isSpeaking: data.isSpeaking
+            });
+        });
+
+        // Broadcast Raise Hand Status
+        socket.on('toggle-raise-hand', (data) => {
+            socket.to(data.roomId).emit('peer-raised-hand', {
+                userId: socket.id,
+                userName: data.userName,
+                isRaised: data.isRaised
+            });
+        });
+
+        // Broadcast Emoji Reactions
+        socket.on('send-reaction', (data) => {
+            socket.to(data.roomId).emit('peer-reaction', {
+                userId: socket.id,
+                emoji: data.emoji
+            });
+        });
+
         socket.on('ice-candidate', (data) => {
             socket.to(data.target).emit('ice-candidate', { candidate: data.candidate, caller: socket.id });
         });
