@@ -293,6 +293,7 @@ const Dashboard = () => {
                               Start Instant Meeting
                            </button>
                         </div>
+                        <p className="text-xs text-slate-500 mt-2">Your Personal ID: {personalRoomCode}</p>
                      </div>
 
                      <div className="bg-slate-800/50 border border-slate-700 p-6 rounded-2xl flex flex-col justify-between shadow-lg">
