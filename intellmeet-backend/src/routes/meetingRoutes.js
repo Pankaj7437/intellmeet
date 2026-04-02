@@ -1,11 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { createMeeting, getAllMeetings } = require('../controllers/meetingController');
+const { protect } = require('../middlewares/authMiddleware');
+const { scheduleMeeting, getMeetings, deleteMeeting } = require('../controllers/meetingController');
 
-// When a POST request hits '/create', run the createMeeting function
-router.post('/create', createMeeting);
-
-// When a GET request hits '/all', run the getAllMeetings function
-router.get('/all', getAllMeetings);
+router.post('/schedule', protect, scheduleMeeting);
+router.get('/', protect, getMeetings);
+router.delete('/:id', protect, deleteMeeting);
 
 module.exports = router;

@@ -4,8 +4,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const http = require('http');
 const { Server } = require('socket.io');
+const rateLimit = require('express-rate-limit'); // Naya Security Feature
 
-// Relative paths based on your provided folder structure
 const connectDB = require('./config/db');
 const authRoutes = require('./routes/authRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
@@ -18,130 +18,68 @@ const server = http.createServer(app);
 // 1. DATABASE CONNECTION
 connectDB();
 
-// 2. MIDDLEWARES
-// Helmet helps secure your app by setting various HTTP headers
-app.use(helmet({
-  contentSecurityPolicy: false, // Disable CSP for easier development/testing of WebRTC
-}));
+// 2. MIDDLEWARES & SECURITY
+app.use(helmet({ contentSecurityPolicy: false }));
 
-// CORS must allow your Vercel production URL for Login/Register to work
+// 🔥 PRODUCTION CORS FIX: Ab sirf aapki Vercel website hi allow hogi
 app.use(cors({
-  origin: ["https://intellmeet.vercel.app", "http://localhost:5173"],
+  origin: ["https://intellmeet.vercel.app", "http://localhost:5173"], 
   credentials: true
 }));
 
-// Body Parser is required to read registration/login JSON data
 app.use(express.json());
 
-// 3. HEALTH CHECK & LANDING ROUTES
-// This prevents the "Cannot GET /" error on Render
-app.get("/", (req, res) => {
-  res.send("IntellMeet API is Running Successfully 🚀");
+// 🔥 RATE LIMITING (Brute Force Protection)
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minute
+    max: 15, // Max 15 attempts
+    message: { message: "Too many requests from this IP, please try again after 15 minutes" }
 });
+// Sirf Login/Register par limit lagayenge
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/login', authLimiter);
 
+
+// 3. ROUTES
+app.get("/", (req, res) => res.send("IntellMeet API is Running Successfully 🚀"));
 app.get('/api/health', (req, res) => res.send('API is healthy...'));
 
-// 4. API ROUTES
 app.use('/api/auth', authRoutes);
 app.use('/api/meetings', meetingRoutes);
 
-// 5. INITIALIZE SOCKET.IO
+// 4. SOCKET.IO (Production Config)
 const io = new Server(server, {
-  cors: {
-    origin: ["https://intellmeet.vercel.app", "http://localhost:5173"],
-    methods: ["GET", "POST"]
+  cors: { 
+    origin: ["https://intellmeet.vercel.app", "http://localhost:5173"], 
+    methods: ["GET", "POST"] 
   }
 });
 
-// 6. REAL-TIME LOGIC
 io.on('connection', (socket) => {
-    console.log(`🟢 User connected: ${socket.id}`);
-
-    // 1. Accept an object with both roomId and userName
     socket.on('join-room', ({ roomId, userName }) => {
         socket.join(roomId);
-        console.log(`User ${socket.id} (${userName}) joined room: ${roomId}`);
-        
-        // Notify others with the new user's ID AND Name
         socket.to(roomId).emit('user-connected', { userId: socket.id, userName });
         
-        socket.on('send-message', (message) => {
-            io.to(roomId).emit('receive-message', message);
-        });
-
-        // Broadcast when a user mutes/unmutes or turns off camera
-        socket.on('media-status-change', (data) => {
-            socket.to(data.roomId).emit('peer-media-status', {
-                userId: socket.id,
-                isMuted: data.isMuted,
-                isVideoOff: data.isVideoOff
-            });
-        });
-
-        // Broadcast current state to newly joined users
-        socket.on('request-media-status', (targetUserId) => {
-            socket.to(targetUserId).emit('request-media-status-from', socket.id);
-        });
-
-        socket.on('send-transcript', (text) => {
-            socket.to(roomId).emit('receive-transcript', { text, sender: socket.id });
-        });
-
-        // MULTI-USER TARGETED SIGNALING for WebRTC (Now passing userName)
-        socket.on('offer', (data) => {
-            socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id, userName: data.userName });
-        });
-
-        socket.on('answer', (data) => {
-            socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id, userName: data.userName });
-        });
-
-        // Broadcast speaking status
-        socket.on('speaking-status', (data) => {
-            socket.to(data.roomId).emit('peer-speaking', {
-                userId: socket.id,
-                isSpeaking: data.isSpeaking
-            });
-        });
-
-        // Broadcast Raise Hand Status
-        socket.on('toggle-raise-hand', (data) => {
-            socket.to(data.roomId).emit('peer-raised-hand', {
-                userId: socket.id,
-                userName: data.userName,
-                isRaised: data.isRaised
-            });
-        });
-
-        // Broadcast Emoji Reactions
-        socket.on('send-reaction', (data) => {
-            socket.to(data.roomId).emit('peer-reaction', {
-                userId: socket.id,
-                emoji: data.emoji
-            });
-        });
-
-        socket.on('ice-candidate', (data) => {
-            socket.to(data.target).emit('ice-candidate', { candidate: data.candidate, caller: socket.id });
-        });
+        socket.on('send-message', (message) => io.to(roomId).emit('receive-message', message));
+        socket.on('media-status-change', (data) => socket.to(data.roomId).emit('peer-media-status', { userId: socket.id, isMuted: data.isMuted, isVideoOff: data.isVideoOff }));
+        socket.on('request-media-status', (targetUserId) => socket.to(targetUserId).emit('request-media-status-from', socket.id));
+        socket.on('send-transcript', (text) => socket.to(roomId).emit('receive-transcript', { text, sender: socket.id }));
+        socket.on('offer', (data) => socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id, userName: data.userName }));
+        socket.on('answer', (data) => socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id, userName: data.userName }));
+        socket.on('speaking-status', (data) => socket.to(data.roomId).emit('peer-speaking', { userId: socket.id, isSpeaking: data.isSpeaking }));
+        socket.on('toggle-raise-hand', (data) => socket.to(data.roomId).emit('peer-raised-hand', { userId: socket.id, userName: data.userName, isRaised: data.isRaised }));
+        socket.on('send-reaction', (data) => socket.to(data.roomId).emit('peer-reaction', { userId: socket.id, emoji: data.emoji }));
+        socket.on('ice-candidate', (data) => socket.to(data.target).emit('ice-candidate', { candidate: data.candidate, caller: socket.id }));
     });
 
     socket.on('disconnecting', () => {
-        // Notify all rooms this user is in before they actually drop
         socket.rooms.forEach(roomId => {
-            if (roomId !== socket.id) {
-                socket.to(roomId).emit('user-disconnected', socket.id);
-            }
+            if (roomId !== socket.id) socket.to(roomId).emit('user-disconnected', socket.id);
         });
-    });
-
-    socket.on('disconnect', () => {
-        console.log(`🔴 User disconnected: ${socket.id}`);
     });
 });
 
-// 7. START SERVER
-// Using 0.0.0.0 is mandatory for Render/Cloud deployments
+// 5. START SERVER (Production ke liye '0.0.0.0' wapas lagana zaroori hai Render k liye)
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);

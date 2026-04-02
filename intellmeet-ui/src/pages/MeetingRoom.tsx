@@ -297,6 +297,7 @@ export default function MeetingRoom() {
     } catch(e) { console.warn("Audio Context error:", e); }
   };
 
+ // ---  LIVE CAPTIONS LOGIC ---
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -304,30 +305,65 @@ export default function MeetingRoom() {
     let recognition = recognitionRef.current;
     if (!recognition) {
       recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US'; 
+      // FIX 1: continuous=false forces browser to process short chunks and prevents memory crash
+      recognition.continuous = false; 
+      recognition.interimResults = true; 
+      recognition.lang = 'en-IN'; 
       recognitionRef.current = recognition;
     }
 
+    let captionTimeout: any;
+
     recognition.onresult = (event: any) => {
+      let currentText = '';
+      let isFinalChunk = false;
+
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          const transcript = event.results[i][0].transcript;
-          socket?.emit('send-transcript', transcript);
-          setLiveCaption(transcript);
-          setTimeout(() => setLiveCaption(''), 4000);
+        currentText += event.results[i][0].transcript;
+        if (event.results[i].isFinal) isFinalChunk = true;
+      }
+      
+      if (currentText.trim()) {
+        // FIX 2: Ek lamba sentence aaye toh bhi sirf aakhiri line (max 100 chars) dikhayega
+        const displayText = currentText.length > 100 ? '...' + currentText.slice(-100) : currentText;
+        setLiveCaption(displayText);
+        
+        clearTimeout(captionTimeout);
+        captionTimeout = setTimeout(() => setLiveCaption(''), 4000);
+
+        if (isFinalChunk) {
+          socket?.emit('send-transcript', currentText);
         }
       }
     };
 
-    recognition.onend = () => { if (!isMuted && recognitionRef.current && captionsEnabled) { try { recognitionRef.current.start(); } catch (e) {} } };
-    
-    if (!isMuted && captionsEnabled) { try { recognition.start(); } catch (e) {} } 
-    else { try { recognition.stop(); } catch (e) {} }
+    // FIX 3: Engine stop hote hi instantly restart karega, ekdum seamless loop!
+    recognition.onend = () => { 
+      if (!isMuted && captionsEnabled && recognitionRef.current) { 
+        try { recognitionRef.current.start(); } catch (e) {} 
+      } 
+    };
 
-    return () => { recognition.onresult = null; recognition.onend = null; };
+    recognition.onerror = (event: any) => {
+      if (event.error === 'not-allowed') console.warn("Microphone permission denied for captions.");
+      // Baki errors (network/silence) ko ignore karke onend ko restart karne dega
+    };
+    
+    if (!isMuted && captionsEnabled) { 
+       try { recognition.start(); } catch (e) {} 
+    } else { 
+       try { recognition.stop(); } catch (e) {} 
+    }
+
+    return () => { 
+       clearTimeout(captionTimeout);
+       recognition.onresult = null; 
+       recognition.onend = null; 
+       recognition.onerror = null;
+       try { recognition.stop(); } catch (e) {} 
+    };
   }, [isMuted, socket, captionsEnabled]); 
+  // ------------------------------------
 
   const createPeerConnection = (peerId: string, currentSocket: Socket, stream: MediaStream) => {
     const pc = new RTCPeerConnection(peerConnectionConfig);
