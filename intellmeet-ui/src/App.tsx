@@ -56,8 +56,9 @@ const Dashboard = () => {
   const [scheduledMeetings, setScheduledMeetings] = useState<any[]>([]);
   const [isLoadingMeetings, setIsLoadingMeetings] = useState(false);
 
-  // Dynamic URL: Vercel par VITE_API_URL lega, Local testing mein 127.0.0.1 lega
-  const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000';
+  // 🔥 URL Fix: Strips extra /api to prevent double paths
+  const base_url = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/api\/?$/, '');
+  const API_URL = `${base_url}/api`;
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
@@ -69,7 +70,7 @@ const Dashboard = () => {
       const fetchMeetings = async () => {
         setIsLoadingMeetings(true);
         try {
-          const res = await fetch(`${API_URL}/api/meetings`, {
+          const res = await fetch(`${API_URL}/meetings`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           const data = await res.json();
@@ -82,7 +83,7 @@ const Dashboard = () => {
       };
       fetchMeetings();
     }
-  }, [activeTab, token]);
+  }, [activeTab, token, API_URL]);
 
   const handleJoin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,7 +104,7 @@ const Dashboard = () => {
     setIsScheduling(true);
     const newRoomId = generateRoomCode();
     try {
-      const res = await fetch(`${API_URL}/api/meetings/schedule`, {
+      const res = await fetch(`${API_URL}/meetings/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ title: meetingTitle, date: meetingDate, time: meetingTime, roomId: newRoomId })
@@ -124,7 +125,7 @@ const Dashboard = () => {
 
   const handleDeleteMeeting = async (id: string) => {
     try {
-      const res = await fetch(`${API_URL}/api/meetings/${id}`, {
+      const res = await fetch(`${API_URL}/meetings/${id}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -141,7 +142,7 @@ const Dashboard = () => {
     if (!newName.trim() || newName === user?.name) return;
     setIsUpdatingProfile(true);
     try {
-      const res = await fetch(`${API_URL}/api/auth/profile`, {
+      const res = await fetch(`${API_URL}/auth/profile`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name: newName })
@@ -167,7 +168,7 @@ const Dashboard = () => {
     }
     setIsUpdatingPassword(true);
     try {
-      const res = await fetch(`${API_URL}/api/auth/password`, {
+      const res = await fetch(`${API_URL}/auth/password`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ currentPassword, newPassword })
@@ -437,5 +438,4 @@ function App() {
   );
 }
 
-// 🔥 YE HAI WO LINE JO MISSING THI
 export default App;

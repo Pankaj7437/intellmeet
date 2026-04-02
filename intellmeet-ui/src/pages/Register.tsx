@@ -9,22 +9,25 @@ export default function Register() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   
-  // Pulling the new setAuth function
   const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
+
+  // 🔥 URL Fix: Anti-Double API protection
+  const raw_url = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const API_URL = raw_url.replace(/\/api\/?$/, '');
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_URL}/api/auth/register`, {
+      // ✅ Ensures the path is always /api/auth/register
+      const response = await axios.post(`${API_URL}/api/auth/register`, {
         name,
         email,
         password,
       });
 
-      // Save both the token and the user object returned by your Node backend
       const token = response.data.accessToken || response.data.token;
       setAuth(token, response.data.user);
       

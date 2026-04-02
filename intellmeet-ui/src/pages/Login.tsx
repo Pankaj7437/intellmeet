@@ -11,15 +11,16 @@ export default function Login() {
   const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
 
-  // 🔥 URL Fix: Localhost ke liye fallback aur /api path add kiya
-  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  // 🔥 URL Fix: Anti-Double API protection
+  const raw_url = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const API_URL = raw_url.replace(/\/api\/?$/, '');
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     try {
-      // ✅ Added /api before /auth/login
+      // ✅ Ensures the path is always /api/auth/login
       const response = await axios.post(`${API_URL}/api/auth/login`, {
         email,
         password,
