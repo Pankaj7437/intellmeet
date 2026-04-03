@@ -1,16 +1,33 @@
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { useState, useEffect } from 'react';
 import { 
   Video, Calendar, User, LogOut, Copy, Plus, 
-  Users, Edit2, Lock, Loader2, X, Trash2, Clock 
+  Users, Edit2, Lock, Loader2, X, Trash2, Clock, ShieldAlert, History, Link as LinkIcon
 } from 'lucide-react';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import MeetingRoom from './pages/MeetingRoom';
 import { useAuthStore } from './store/authStore';
 
+// 🔥 Proper TypeScript Interfaces
+interface MeetingData {
+  _id: string;
+  title: string;
+  date: string;
+  time: string;
+  roomId: string;
+  isWaitingRoom?: boolean;
+}
+
+interface AuthState {
+  token: string | null;
+  user: any;
+  logout: () => void;
+  setUser: (user: any) => void;
+}
+
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const token = useAuthStore((state: any) => state.token);
+  const token = useAuthStore((state: unknown) => (state as AuthState).token);
   if (!token) return <Navigate to="/" replace />;
   return <>{children}</>;
 };
@@ -24,17 +41,18 @@ const generateRoomCode = () => {
 const Dashboard = () => {
   const navigate = useNavigate();
   
-  const user = useAuthStore((state: any) => state.user);
-  const logout = useAuthStore((state: any) => state.logout);
-  const token = useAuthStore((state: any) => state.token);
-  const setUser = useAuthStore((state: any) => state.setUser);
+  const user = useAuthStore((state: unknown) => (state as AuthState).user);
+  const logout = useAuthStore((state: unknown) => (state as AuthState).logout);
+  const token = useAuthStore((state: unknown) => (state as AuthState).token);
+  const setUser = useAuthStore((state: unknown) => (state as AuthState).setUser);
   
-  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'profile'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'profile'>('home');
   const [joinCode, setJoinCode] = useState('');
   const [instantRoomCode] = useState(generateRoomCode());
+  const [instantWaitingRoom, setInstantWaitingRoom] = useState(false);
   
-  // 🔥 API URL Fix: Anti-Double API protection
-  const base_url = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/api\/?$/, '');
+  // 🔥 Safe environment variable casting for TypeScript
+  const base_url = ((import.meta as any).env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/api\/?$/, '');
   const API_URL = `${base_url}/api`;
 
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
@@ -49,9 +67,10 @@ const Dashboard = () => {
   const [meetingTitle, setMeetingTitle] = useState('');
   const [meetingDate, setMeetingDate] = useState('');
   const [meetingTime, setMeetingTime] = useState('');
+  const [isWaitingRoom, setIsWaitingRoom] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
   
-  const [scheduledMeetings, setScheduledMeetings] = useState<any[]>([]);
+  const [scheduledMeetings, setScheduledMeetings] = useState<MeetingData[]>([]);
   const [isLoadingMeetings, setIsLoadingMeetings] = useState(false);
 
   const showToast = (msg: string, type: 'success' | 'error') => {
@@ -60,15 +79,21 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    if (activeTab === 'schedule' && token) {
+    if ((activeTab === 'schedule' || activeTab === 'history') && token) {
       const fetchMeetings = async () => {
         setIsLoadingMeetings(true);
         try {
           const res = await fetch(`${API_URL}/meetings`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
-          const data = await res.json();
-          if (res.ok) setScheduledMeetings(data);
+          if (res.status === 401) {
+            logout();
+            return;
+          }
+          if (res.ok) {
+            const data = await res.json();
+            setScheduledMeetings(data);
+          }
         } catch (err) {
           console.error("Failed to fetch meetings", err);
         } finally {
@@ -77,23 +102,49 @@ const Dashboard = () => {
       };
       fetchMeetings();
     }
-  }, [activeTab, token, API_URL]);
+  }, [activeTab, token, API_URL, logout]);
 
-  const handleJoin = (e: React.FormEvent) => {
+  const handleJoin = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (joinCode.trim()) navigate(`/meeting/${joinCode.trim()}`);
+    if (joinCode.trim()) {
+      let code = joinCode.trim();
+      if (code.includes('/meeting/')) {
+        code = code.split('/meeting/')[1].split('/')[0].split('?')[0]; 
+      }
+      navigate(`/meeting/${code}`);
+    }
   };
 
-  const startInstantMeeting = () => {
-    navigate(`/meeting/${instantRoomCode}`);
+  const startInstantMeeting = async () => {
+    try {
+      const res = await fetch(`${API_URL}/meetings/schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ 
+          title: 'Instant Meeting', 
+          roomId: instantRoomCode, 
+          isWaitingRoom: instantWaitingRoom 
+        })
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+           logout();
+           throw new Error('Session expired. Please login again.');
+        }
+        throw new Error('Failed to start meeting');
+      }
+      navigate(`/meeting/${instantRoomCode}`);
+    } catch (err: any) {
+      showToast(err.message || 'Error creating meeting', 'error');
+    }
   };
 
-  const copyToClipboard = (text: string) => {
+  const copyToClipboard = (text: string, isLink: boolean = false) => {
     navigator.clipboard.writeText(text);
-    showToast('Room code copied to clipboard!', 'success');
+    showToast(isLink ? 'Invite Link copied!' : 'Room Code copied!', 'success');
   };
 
-  const handleScheduleMeeting = async (e: React.FormEvent) => {
+  const handleScheduleMeeting = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsScheduling(true);
     const newRoomId = generateRoomCode();
@@ -101,14 +152,28 @@ const Dashboard = () => {
       const res = await fetch(`${API_URL}/meetings/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ title: meetingTitle, date: meetingDate, time: meetingTime, roomId: newRoomId })
+        body: JSON.stringify({ 
+          title: meetingTitle, 
+          date: meetingDate, 
+          time: meetingTime, 
+          roomId: newRoomId, 
+          isWaitingRoom 
+        })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to schedule');
+
+      if (!res.ok) {
+        if (res.status === 401) {
+            logout();
+            throw new Error('Session expired. Please login again.');
+        }
+        const data = await res.json();
+        throw new Error(data.message || 'Failed to schedule');
+      }
       
+      const data = await res.json();
       setScheduledMeetings(prev => [...prev, data]);
       setShowScheduleModal(false);
-      setMeetingTitle(''); setMeetingDate(''); setMeetingTime('');
+      setMeetingTitle(''); setMeetingDate(''); setMeetingTime(''); setIsWaitingRoom(false);
       showToast('Meeting Scheduled Successfully!', 'success');
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -125,7 +190,9 @@ const Dashboard = () => {
       });
       if (res.ok) {
         setScheduledMeetings(prev => prev.filter(m => m._id !== id));
-        showToast('Meeting deleted', 'success');
+        showToast('Meeting removed from history', 'success');
+      } else if (res.status === 401) {
+        logout();
       }
     } catch (err) {
       console.error(err);
@@ -141,24 +208,25 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name: newName })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to update profile');
-      
-      if (user) {
-        setUser({ ...user, name: data.name });
+      if (!res.ok) {
+          if(res.status === 401) logout();
+          const data = await res.json();
+          throw new Error(data.message || 'Failed to update profile');
       }
+      const data = await res.json();
+      if (user) setUser({ ...user, name: data.name });
       showToast('Profile updated successfully!', 'success');
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    } finally {
-      setIsUpdatingProfile(false);
+    } catch (err: any) { 
+      showToast(err.message, 'error'); 
+    } finally { 
+      setIsUpdatingProfile(false); 
     }
   };
 
   const handleUpdatePassword = async () => {
-    if (!currentPassword || newPassword.length < 6) {
-      showToast('Password must be at least 6 characters long.', 'error');
-      return;
+    if (!currentPassword || newPassword.length < 6) { 
+      showToast('Password must be at least 6 characters long.', 'error'); 
+      return; 
     }
     setIsUpdatingPassword(true);
     try {
@@ -167,18 +235,26 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ currentPassword, newPassword })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || 'Failed to update password');
-      
+      if (!res.ok) {
+          if(res.status === 401) logout();
+          throw new Error('Failed to update password');
+      }
       showToast('Password updated securely!', 'success');
-      setCurrentPassword('');
+      setCurrentPassword(''); 
       setNewPassword('');
-    } catch (err: any) {
-      showToast(err.message, 'error');
-    } finally {
-      setIsUpdatingPassword(false);
+    } catch (err: any) { 
+      showToast(err.message, 'error'); 
+    } finally { 
+      setIsUpdatingPassword(false); 
     }
   };
+
+  const now = new Date();
+  const currentDate = now.toISOString().split('T')[0];
+  const currentTime = now.toTimeString().split(' ')[0];
+
+  const upcomingMeetings = scheduledMeetings.filter(m => m.date > currentDate || (m.date === currentDate && m.time >= currentTime));
+  const pastMeetings = scheduledMeetings.filter(m => m.date < currentDate || (m.date === currentDate && m.time < currentTime));
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col md:flex-row font-sans relative">
@@ -209,6 +285,10 @@ const Dashboard = () => {
                   <input type="time" value={meetingTime} onChange={e=>setMeetingTime(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-sm focus:border-blue-500 outline-none" required />
                 </div>
               </div>
+              <label className="flex items-center gap-2 mt-2 text-sm text-slate-300 cursor-pointer">
+                <input type="checkbox" checked={isWaitingRoom} onChange={e => setIsWaitingRoom(e.target.checked)} className="rounded text-blue-500 bg-slate-800 border-slate-700 w-4 h-4" />
+                Enable Waiting Room (Require Approval)
+              </label>
               <button type="submit" disabled={isScheduling} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl mt-4 transition-colors flex justify-center items-center gap-2">
                 {isScheduling && <Loader2 size={18} className="animate-spin" />}
                 Confirm Schedule
@@ -218,6 +298,7 @@ const Dashboard = () => {
         </div>
       )}
 
+      {/* Sidebar */}
       <div className="w-full md:w-64 bg-slate-950 border-b md:border-b-0 md:border-r border-slate-800 flex flex-row md:flex-col justify-between fixed bottom-0 md:relative z-50 md:z-auto order-last md:order-first">
          <div className="hidden md:flex items-center gap-3 p-6 border-b border-slate-800">
             <div className="bg-blue-600 p-2 rounded-xl"><Video size={24} className="text-white" /></div>
@@ -233,6 +314,10 @@ const Dashboard = () => {
                <Calendar size={20} />
                <span className="text-[10px] md:text-sm font-medium">Schedule</span>
             </button>
+            <button onClick={() => setActiveTab('history')} className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-3 md:px-4 md:py-3 rounded-xl transition-all ${activeTab === 'history' ? 'bg-blue-600/10 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
+               <History size={20} />
+               <span className="text-[10px] md:text-sm font-medium">History</span>
+            </button>
             <button onClick={() => setActiveTab('profile')} className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-3 md:px-4 md:py-3 rounded-xl transition-all ${activeTab === 'profile' ? 'bg-blue-600/10 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
                <User size={20} />
                <span className="text-[10px] md:text-sm font-medium">Profile</span>
@@ -247,7 +332,9 @@ const Dashboard = () => {
          </div>
       </div>
 
+      {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto pb-20 md:pb-0 bg-slate-900">
+         
          <div className="md:hidden flex items-center justify-between p-4 border-b border-slate-800 bg-slate-950 sticky top-0 z-40">
             <div className="flex items-center gap-2">
                <div className="bg-blue-600 p-1.5 rounded-lg"><Video size={20} className="text-white" /></div>
@@ -258,6 +345,7 @@ const Dashboard = () => {
 
          <div className="max-w-4xl mx-auto p-4 md:p-8 mt-4 md:mt-8">
             
+            {/* Home Tab */}
             {activeTab === 'home' && (
                <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <div className="flex items-center gap-4 mb-8">
@@ -277,12 +365,19 @@ const Dashboard = () => {
                               <Video size={24} className="text-blue-400" />
                            </div>
                            <h3 className="text-xl font-bold mb-2">New Meeting</h3>
-                           <p className="text-slate-400 text-sm mb-6">Start an instant meeting with a secure, random code.</p>
+                           <p className="text-slate-400 text-sm mb-4">Start an instant meeting with a secure, random code.</p>
+                           <label className="flex items-center gap-2 mb-4 text-sm text-slate-300 cursor-pointer">
+                             <input type="checkbox" checked={instantWaitingRoom} onChange={e => setInstantWaitingRoom(e.target.checked)} className="rounded text-blue-500 bg-slate-900 border-slate-700 w-4 h-4" />
+                             Enable Waiting Room
+                           </label>
                         </div>
                         <div className="space-y-3">
                            <div className="flex items-center justify-between bg-slate-950 p-3 rounded-lg border border-slate-800">
-                              <span className="text-sm font-mono text-slate-300 truncate">{instantRoomCode}</span>
-                              <button onClick={() => copyToClipboard(instantRoomCode)} className="text-slate-400 hover:text-white transition-colors"><Copy size={16}/></button>
+                              <span className="text-sm font-mono text-slate-300 font-bold tracking-wider">{instantRoomCode}</span>
+                              <div className="flex gap-1">
+                                 <button onClick={() => copyToClipboard(instantRoomCode, false)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white rounded-md transition-colors" title="Copy Code"><Copy size={16}/></button>
+                                 <button onClick={() => copyToClipboard(`${window.location.origin}/meeting/${instantRoomCode}`, true)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-blue-400 rounded-md transition-colors" title="Copy Invite Link"><LinkIcon size={16}/></button>
+                              </div>
                            </div>
                            <button onClick={startInstantMeeting} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors shadow-lg">
                               Start Instant Meeting
@@ -296,12 +391,12 @@ const Dashboard = () => {
                               <Users size={24} className="text-emerald-400" />
                            </div>
                            <h3 className="text-xl font-bold mb-2">Join Meeting</h3>
-                           <p className="text-slate-400 text-sm mb-6">Enter a room code or link to join an ongoing meeting.</p>
+                           <p className="text-slate-400 text-sm mb-6">Enter a room code or full link to join an ongoing meeting.</p>
                         </div>
                         <form onSubmit={handleJoin} className="space-y-3">
                            <input 
                               type="text" 
-                              placeholder="Enter Code (e.g., abc-defg-hij)" 
+                              placeholder="Enter Link or Code" 
                               value={joinCode}
                               onChange={(e) => setJoinCode(e.target.value)}
                               className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg p-3 text-sm outline-none transition-all"
@@ -315,6 +410,7 @@ const Dashboard = () => {
                </div>
             )}
 
+            {/* Schedule Tab */}
             {activeTab === 'schedule' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                   <div className="flex justify-between items-end mb-8">
@@ -329,18 +425,28 @@ const Dashboard = () => {
 
                   {isLoadingMeetings ? (
                      <div className="flex justify-center p-12"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
-                  ) : scheduledMeetings.length > 0 ? (
+                  ) : upcomingMeetings.length > 0 ? (
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {scheduledMeetings.map(meeting => (
+                        {upcomingMeetings.map(meeting => (
                            <div key={meeting._id} className="bg-slate-800/40 border border-slate-700 rounded-2xl p-5 shadow-lg relative group">
                               <h3 className="font-bold text-lg text-white mb-1">{meeting.title}</h3>
+                              {meeting.isWaitingRoom && (
+                                <span className="absolute top-4 right-4 text-[10px] bg-yellow-500/20 text-yellow-500 px-2 py-1 rounded-full flex items-center">
+                                  <ShieldAlert size={12} className="mr-1"/> Waiting Room
+                                </span>
+                              )}
                               <p className="text-sm text-slate-400 mb-4 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {meeting.time}</p>
+                              
                               <div className="flex items-center justify-between bg-slate-900 p-2 rounded-lg border border-slate-800 mb-4">
-                                 <span className="text-xs font-mono text-slate-300">{meeting.roomId}</span>
-                                 <button onClick={() => copyToClipboard(meeting.roomId)} className="text-slate-400 hover:text-white transition-colors"><Copy size={14}/></button>
+                                 <span className="text-xs font-mono text-slate-300 font-bold tracking-wider truncate mr-2">{meeting.roomId}</span>
+                                 <div className="flex gap-1 flex-shrink-0">
+                                    <button onClick={() => copyToClipboard(meeting.roomId, false)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white rounded-md transition-colors" title="Copy Code"><Copy size={14}/></button>
+                                    <button onClick={() => copyToClipboard(`${window.location.origin}/meeting/${meeting.roomId}`, true)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-blue-400 rounded-md transition-colors" title="Copy Invite Link"><LinkIcon size={14}/></button>
+                                 </div>
                               </div>
+
                               <div className="flex gap-2">
-                                <button onClick={() => navigate(`/meeting/${meeting.roomId}`)} className="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded-lg text-sm font-bold transition-colors">Start Meeting</button>
+                                <button onClick={() => navigate(`/meeting/${meeting.roomId}`)} className="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded-lg text-sm font-bold transition-colors">Start / Join</button>
                                 <button onClick={() => handleDeleteMeeting(meeting._id)} className="bg-slate-700 hover:bg-red-600/20 hover:text-red-400 p-2 rounded-lg transition-colors"><Trash2 size={18}/></button>
                               </div>
                            </div>
@@ -361,6 +467,53 @@ const Dashboard = () => {
                </div>
             )}
 
+            {/* History Tab */}
+            {activeTab === 'history' && (
+               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                  <div className="flex justify-between items-end mb-8">
+                     <div>
+                        <h2 className="text-2xl md:text-3xl font-bold">Meeting History</h2>
+                        <p className="text-slate-400 text-sm mt-1">Access or rejoin your past meetings</p>
+                     </div>
+                  </div>
+
+                  {isLoadingMeetings ? (
+                     <div className="flex justify-center p-12"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
+                  ) : pastMeetings.length > 0 ? (
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {pastMeetings.map(meeting => (
+                           <div key={meeting._id} className="bg-slate-800/20 border border-slate-700 rounded-2xl p-5 relative group opacity-80 hover:opacity-100 transition-opacity">
+                              <h3 className="font-bold text-lg text-white mb-1">{meeting.title}</h3>
+                              <p className="text-sm text-slate-400 mb-4 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {meeting.time}</p>
+                              
+                              <div className="flex items-center justify-between bg-slate-900/50 p-2 rounded-lg border border-slate-800 mb-4">
+                                 <span className="text-xs font-mono text-slate-300 font-bold tracking-wider truncate mr-2">{meeting.roomId}</span>
+                                 <div className="flex gap-1 flex-shrink-0">
+                                    <button onClick={() => copyToClipboard(meeting.roomId, false)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white rounded-md transition-colors" title="Copy Code"><Copy size={14}/></button>
+                                    <button onClick={() => copyToClipboard(`${window.location.origin}/meeting/${meeting.roomId}`, true)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-blue-400 rounded-md transition-colors" title="Copy Invite Link"><LinkIcon size={14}/></button>
+                                 </div>
+                              </div>
+
+                              <div className="flex gap-2">
+                                <button onClick={() => navigate(`/meeting/${meeting.roomId}`)} className="flex-1 bg-slate-700 hover:bg-blue-600 py-2 rounded-lg text-sm font-bold transition-colors">Rejoin</button>
+                                <button onClick={() => handleDeleteMeeting(meeting._id)} className="bg-slate-700 hover:bg-red-600/20 hover:text-red-400 p-2 rounded-lg transition-colors"><Trash2 size={18}/></button>
+                              </div>
+                           </div>
+                        ))}
+                     </div>
+                  ) : (
+                     <div className="bg-slate-800/30 border border-slate-700 rounded-2xl overflow-hidden">
+                        <div className="p-10 flex flex-col items-center justify-center text-center">
+                           <div className="bg-slate-800 p-4 rounded-full mb-4"><History size={32} className="text-slate-400" /></div>
+                           <h3 className="text-lg font-bold mb-2">No Past Meetings</h3>
+                           <p className="text-slate-400 text-sm max-w-sm mb-6">Your meeting history is clean.</p>
+                        </div>
+                     </div>
+                  )}
+               </div>
+            )}
+
+            {/* Profile Tab */}
             {activeTab === 'profile' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-2xl">
                   <h2 className="text-2xl md:text-3xl font-bold mb-8">Profile Settings</h2>
@@ -418,7 +571,7 @@ const Dashboard = () => {
   );
 };
 
-function App() {
+export default function App() {
   return (
     <BrowserRouter>
       <Routes>
@@ -430,5 +583,3 @@ function App() {
     </BrowserRouter>
   );
 }
-
-export default App;
