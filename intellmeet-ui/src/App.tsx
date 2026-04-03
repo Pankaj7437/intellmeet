@@ -33,12 +33,10 @@ const Dashboard = () => {
   const [joinCode, setJoinCode] = useState('');
   const [instantRoomCode] = useState(generateRoomCode());
   
-  const personalRoomCode = user?.username 
-    ? `${user?.username}-meet` 
-    : user?.name 
-      ? `${user?.name.split(' ')[0].toLowerCase()}-meet` 
-      : `room-${Math.floor(Math.random() * 10000)}`;
-  
+  // 🔥 API URL Fix: Anti-Double API protection
+  const base_url = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/api\/?$/, '');
+  const API_URL = `${base_url}/api`;
+
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
 
   const [newName, setNewName] = useState(user?.name || user?.firstName || '');
@@ -55,10 +53,6 @@ const Dashboard = () => {
   
   const [scheduledMeetings, setScheduledMeetings] = useState<any[]>([]);
   const [isLoadingMeetings, setIsLoadingMeetings] = useState(false);
-
-  // 🔥 URL Fix: Strips extra /api to prevent double paths
-  const base_url = (import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/api\/?$/, '');
-  const API_URL = `${base_url}/api`;
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
@@ -294,7 +288,6 @@ const Dashboard = () => {
                               Start Instant Meeting
                            </button>
                         </div>
-                        <p className="text-xs text-slate-500 mt-2">Your Personal ID: {personalRoomCode}</p>
                      </div>
 
                      <div className="bg-slate-800/50 border border-slate-700 p-6 rounded-2xl flex flex-col justify-between shadow-lg">
