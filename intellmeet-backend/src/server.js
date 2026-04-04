@@ -58,7 +58,8 @@ io.on('connection', (socket) => {
             if (!roomStates[roomId]) {
                 roomStates[roomId] = {
                     isWaitingRoom: meeting.isWaitingRoom,
-                    permissions: { mic: true, video: true, screen: true },
+                    // 🔥 NAYA: 'record: false' default permission lagaya
+                    permissions: { mic: true, video: true, screen: true, record: false },
                     roles: {}, // Mapped by socket.id for real-time accuracy
                     approvedUsers: new Set() // Mapped by DB userId to survive refreshes
                 };
@@ -95,7 +96,6 @@ io.on('connection', (socket) => {
         io.to(targetSocketId).emit('join-denied'); 
     });
 
-    // 🔥 FIX: Using targetSocketId properly to map Co-Hosts
     socket.on('make-cohost', ({ targetSocketId, roomId }) => {
         if(roomStates[roomId]) { 
             roomStates[roomId].roles[targetSocketId] = 'co-host'; 

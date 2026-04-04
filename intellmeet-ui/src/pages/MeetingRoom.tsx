@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle } from 'lucide-react';
 import { useAuthStore } from '../store/authStore'; 
 
 const peerConnectionConfig = {
@@ -63,13 +63,13 @@ export default function MeetingRoom() {
   const navigate = useNavigate();
   const [socket, setSocket] = useState<Socket | null>(null);
 
-  // 🔥 LOBBY & ROLES STATE
+  // 🔥 LOBBY & ROLES STATE (Record added to permissions)
   const [inLobby, setInLobby] = useState(!sessionStorage.getItem(`intellmeet_room_${roomId}`));
   const [isWaiting, setIsWaiting] = useState(false); 
   const [myRole, setMyRole] = useState<'creator' | 'co-host' | 'guest'>('guest');
   const [roomRoles, setRoomRoles] = useState<{[key: string]: 'creator' | 'co-host' | 'guest'}>({});
   const [joinRequests, setJoinRequests] = useState<any[]>([]);
-  const [globalPermissions, setGlobalPermissions] = useState({ mic: true, video: true, screen: true });
+  const [globalPermissions, setGlobalPermissions] = useState({ mic: true, video: true, screen: true, record: false });
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   
   const [showSidebar, setShowSidebar] = useState(false); 
@@ -106,6 +106,11 @@ export default function MeetingRoom() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState<{ id: number, emoji: string, left: number }[]>([]);
 
+  // 🔥 RECORDING STATES
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+
   const user = useAuthStore((state: any) => state.user);
   
   const getUserId = () => {
@@ -134,7 +139,6 @@ export default function MeetingRoom() {
     const newSocket = io(((import.meta as any).env.VITE_SOCKET_URL) || 'http://localhost:5000');
     setSocket(newSocket);
 
-    // 🔥 ORIGINAL FLAWLESS WEBRTC SETUP
     const setupMedia = async () => {
       let stream: MediaStream;
       let initialMute = localStorage.getItem('intellmeet_isMuted') === 'true';
@@ -163,12 +167,10 @@ export default function MeetingRoom() {
       setMyStream(stream);
       setupAudioMeter(stream); 
 
-      // Send join request automatically if not in lobby (e.g. refreshed page)
       if (!inLobby) {
          newSocket.emit('join-request', { roomId, userId: userIdStore, userName });
       }
 
-      // 🔥 ALL WEBRTC EVENTS TIED DIRECTLY TO THE STREAM CLOSURE FOR FLAWLESS CONNECTIONS
       newSocket.on('user-connected', async ({ userId, userName: incomingName }) => {
         setPeerNames(prev => ({ ...prev, [userId]: incomingName }));
         newSocket.emit('request-media-status', userId);
@@ -204,7 +206,6 @@ export default function MeetingRoom() {
 
     setupMedia();
 
-    // LOBBY & ROOM NOTIFICATION EVENTS
     newSocket.on('join-approved', ({ role, permissions }) => {
         if (!isMounted) return;
         setIsWaiting(false); 
@@ -327,8 +328,14 @@ export default function MeetingRoom() {
             setPinnedUserId(p => p === 'local-screen' ? null : p);
             showNotification("Host disabled screen sharing.");
         }
+        // 🔥 NAYA: Agar host recording disable kar de
+        if (!globalPermissions.record && isRecording) {
+            mediaRecorderRef.current?.stop();
+            setIsRecording(false);
+            showNotification("Host disabled recording. Your recording has been saved.");
+        }
     }
-  }, [globalPermissions, myRole, myStream, isMuted, isVideoOff, localScreenStream, roomId, socket]);
+  }, [globalPermissions, myRole, myStream, isMuted, isVideoOff, localScreenStream, roomId, socket, isRecording]);
 
   const handleJoinClick = () => {
     setInLobby(false); 
@@ -338,6 +345,9 @@ export default function MeetingRoom() {
 
   const leaveMeeting = () => {
     myStream?.getTracks().forEach(t => t.stop());
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+    }
     sessionStorage.removeItem(`intellmeet_room_${roomId}`);
     navigate('/dashboard');
   };
@@ -464,7 +474,6 @@ export default function MeetingRoom() {
     };
   }, [isMuted, socket, captionsEnabled, inLobby, isWaiting]); 
 
-  // 🔥 ORIGINAL FLAWLESS WEBRTC CONNECTION GENERATOR
   const createPeerConnection = (peerId: string, currentSocket: Socket, stream: MediaStream) => {
     const pc = new RTCPeerConnection(peerConnectionConfig);
     peersRef.current[peerId] = pc;
@@ -480,7 +489,6 @@ export default function MeetingRoom() {
     return pc;
   };
 
-  // 🔥 ORIGINAL SIMPLE TOGGLE LOGIC - NO COMPLEX ADDTRACK/REPLACETRACK
   const toggleMute = () => {
     if (!inLobby && myRole === 'guest' && !globalPermissions.mic && isMuted) return alert("Host has disabled microphones.");
     if (myStream && myStream.getAudioTracks().length > 0) {
@@ -581,7 +589,64 @@ export default function MeetingRoom() {
     }
   };
 
-  const handleSecurityUpdate = (type: 'mic' | 'video' | 'screen') => {
+  // 🔥 RECORDING LOGIC (Non-Breaking)
+  const toggleRecording = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+      showNotification("Recording saved automatically!", "System");
+      return;
+    }
+
+    try {
+      const constraints: any = {
+        video: { displaySurface: "browser" },
+        audio: true
+      };
+      const stream = await navigator.mediaDevices.getDisplayMedia(constraints);
+
+      const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+      mediaRecorderRef.current = recorder;
+      recordedChunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = `IntellMeet-Recording-${roomId}-${new Date().toISOString().split('T')[0]}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      stream.getVideoTracks()[0].onended = () => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+          setIsRecording(false);
+          showNotification("Recording saved automatically!", "System");
+        }
+      };
+
+      recorder.start(1000); 
+      setIsRecording(true);
+      showNotification("Meeting Recording Started!", "System");
+
+    } catch (err: any) {
+      if (err.name !== "NotAllowedError") {
+        console.error("Recording error:", err);
+        showNotification("Failed to start recording.", "System");
+      }
+    }
+  };
+
+  const handleSecurityUpdate = (type: 'mic' | 'video' | 'screen' | 'record') => {
       const newPerms = { ...globalPermissions, [type]: !globalPermissions[type] };
       setGlobalPermissions(newPerms);
       socket?.emit('update-permissions', { roomId, permissions: newPerms });
@@ -705,6 +770,11 @@ export default function MeetingRoom() {
                  <label className="flex items-center justify-between p-3 bg-slate-800 rounded-xl cursor-pointer hover:bg-slate-700 transition">
                     <span className="font-medium text-sm">Share Screen</span>
                     <input type="checkbox" checked={globalPermissions.screen} onChange={() => handleSecurityUpdate('screen')} className="w-4 h-4 text-blue-600 rounded" />
+                 </label>
+                 {/* 🔥 RECORD MEETING TOGGLE */}
+                 <label className="flex items-center justify-between p-3 bg-slate-800 rounded-xl cursor-pointer hover:bg-slate-700 transition">
+                    <span className="font-medium text-sm">Record Meeting</span>
+                    <input type="checkbox" checked={globalPermissions.record} onChange={() => handleSecurityUpdate('record')} className="w-4 h-4 text-blue-600 rounded" />
                  </label>
               </div>
            </div>
@@ -891,6 +961,18 @@ export default function MeetingRoom() {
 
           <button onClick={toggleScreenShare} className={`p-3 md:p-4 rounded-full transition-all duration-200 hidden md:block ${localScreenStream ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : (myRole === 'guest' && !globalPermissions.screen ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-slate-300')}`} title="Present Screen">
             <MonitorUp size={20} />
+          </button>
+
+          {/* 🔥 UPDATED RECORD BUTTON WITH HOST PERMISSION */}
+          <button 
+            onClick={() => {
+                if (myRole === 'guest' && !globalPermissions.record) return alert("Host has disabled recording for participants.");
+                toggleRecording();
+            }} 
+            className={`p-3 md:p-4 rounded-full transition-all duration-200 hidden md:block ${isRecording ? 'bg-red-600 hover:bg-red-700 text-white shadow-[0_0_15px_rgba(220,38,38,0.6)] animate-pulse' : (myRole === 'guest' && !globalPermissions.record ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-slate-300')}`} 
+            title={isRecording ? "Stop Recording" : "Start Recording"}
+          >
+            {isRecording ? <StopCircle size={20} /> : <Circle size={20} />}
           </button>
 
           <div className="w-px h-8 bg-slate-700 mx-1 md:mx-2 hidden sm:block"></div>
