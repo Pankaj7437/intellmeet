@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2 } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2, MoreVertical } from 'lucide-react';
 import { useAuthStore } from '../store/authStore'; 
 
 const peerConnectionConfig = {
@@ -62,6 +62,7 @@ export default function MeetingRoom() {
   const { roomId } = useParams();
   const navigate = useNavigate();
   const [socket, setSocket] = useState<Socket | null>(null);
+  const [showTopMenu, setShowTopMenu] = useState(false);
 
   const [inLobby, setInLobby] = useState(!sessionStorage.getItem(`intellmeet_room_${roomId}`));
   const [isWaiting, setIsWaiting] = useState(false); 
@@ -104,7 +105,7 @@ export default function MeetingRoom() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState<{ id: number, emoji: string, left: number }[]>([]);
-
+  
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -925,34 +926,64 @@ export default function MeetingRoom() {
             {myRole === 'creator' && <span className="bg-blue-600 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Host</span>}
             {myRole === 'co-host' && <span className="bg-yellow-600 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Co-Host</span>}
           </h2>
-          <div className="flex gap-2">
-            
-            {/* AI SUMMARY BUTTON */}
-            <button onClick={generateAISummary} disabled={isGeneratingAI} className="bg-purple-600/20 text-purple-400 border border-purple-500/50 hover:bg-purple-600 hover:text-white px-2 py-1.5 md:px-4 md:py-2 text-xs md:text-base rounded-lg font-bold transition shadow-lg flex items-center gap-1 md:gap-2 mr-2">
-                {isGeneratingAI ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-                <span className="hidden sm:inline">AI Summary</span>
-            </button>
 
-            {/* HOST END MEETING BUTTON */}
-            {myRole === 'creator' && (
-                <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-700 px-2 py-1.5 md:px-4 md:py-2 text-xs md:text-base rounded-lg font-bold hover:bg-red-800 transition shadow-lg mr-1 text-white">
+          <div className="flex gap-2 items-center relative">
+            {/* DESKTOP VIEW */}
+            <div className="hidden md:flex items-center gap-2">
+              <button onClick={generateAISummary} disabled={isGeneratingAI} className="bg-purple-600/20 text-purple-400 border border-purple-500/50 hover:bg-purple-600 hover:text-white px-4 py-2 rounded-lg font-bold transition flex items-center gap-2">
+                {isGeneratingAI ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                <span>AI Summary</span>
+              </button>
+
+              {myRole === 'creator' && (
+                <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-700 px-4 py-2 rounded-lg font-bold hover:bg-red-800 text-white">
                   End Meeting
                 </button>
-            )}
+              )}
 
-            {(myRole === 'creator' || myRole === 'co-host') && (
-              <button onClick={() => setShowSecurityModal(true)} className="bg-slate-800 p-2 rounded-lg hover:bg-slate-700 transition shadow-lg text-blue-400" title="Security">
-                <Shield size={18} />
+              {(myRole === 'creator' || myRole === 'co-host') && (
+                <button onClick={() => setShowSecurityModal(true)} className="bg-slate-800 p-2 rounded-lg text-blue-400">
+                  <Shield size={18} />
+                </button>
+              )}
+              <button onClick={() => setShowSettingsModal(true)} className="bg-slate-800 p-2 rounded-lg text-slate-300">
+                <Settings size={18} />
               </button>
-            )}
-            <button onClick={() => setShowSettingsModal(true)} className="bg-slate-800 p-2 rounded-lg hover:bg-slate-700 transition shadow-lg text-slate-300">
-              <Settings size={18} />
-            </button>
-            <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('participants'); }} className="md:hidden bg-slate-800 p-2 rounded-lg hover:bg-slate-700 transition shadow-lg relative">
+            </div>
+
+            {/* MOBILE VIEW: 3-Dots Dropdown */}
+            <div className="md:hidden flex gap-2">
+              <button onClick={() => setShowTopMenu(!showTopMenu)} className="bg-slate-800 p-2 rounded-lg text-slate-300">
+                <MoreVertical size={18} />
+              </button>
+              
+              {showTopMenu && (
+                <div className="absolute top-12 right-0 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col p-2 gap-2 z-[100] w-48">
+                  <button onClick={() => { generateAISummary(); setShowTopMenu(false); }} className="text-left bg-purple-600/20 text-purple-400 px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-2">
+                    <Sparkles size={14}/> AI Summary
+                  </button>
+                  {myRole === 'creator' && (
+                    <button onClick={() => { handleEndMeeting(); setShowTopMenu(false); }} className="text-left bg-red-700 text-white px-3 py-2 rounded-lg text-sm font-bold">
+                      End Meeting
+                    </button>
+                  )}
+                  {(myRole === 'creator' || myRole === 'co-host') && (
+                    <button onClick={() => { setShowSecurityModal(true); setShowTopMenu(false); }} className="text-left text-blue-400 hover:bg-slate-800 px-3 py-2 rounded-lg text-sm flex items-center gap-2">
+                      <Shield size={14}/> Security
+                    </button>
+                  )}
+                  <button onClick={() => { setShowSettingsModal(true); setShowTopMenu(false); }} className="text-left text-slate-300 hover:bg-slate-800 px-3 py-2 rounded-lg text-sm flex items-center gap-2">
+                    <Settings size={14}/> Settings
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('participants'); }} className="md:hidden bg-slate-800 p-2 rounded-lg relative">
               <Users size={18} />
               {joinRequests.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] h-4 w-4 flex items-center justify-center rounded-full">{joinRequests.length}</span>}
             </button>
-            <button onClick={leaveMeeting} className="bg-slate-700 px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded-lg font-bold hover:bg-slate-600 transition shadow-lg">
+            <button onClick={leaveMeeting} className="bg-slate-700 px-3 py-1.5 text-sm rounded-lg font-bold">
               Leave
             </button>
           </div>
