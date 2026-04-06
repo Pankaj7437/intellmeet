@@ -57,12 +57,9 @@ exports.updatePassword = async (req, res) => {
     try {
         const { currentPassword, newPassword } = req.body;
         const user = await User.findById(req.user._id);
-        
-        // Purana password verify karo
+
         if (user && (await bcrypt.compare(currentPassword, user.password))) {
             
-            // 🔥 FIX: Yahan manually hash nahi karna hai! Seedha save karo. 
-            // User.js model khud usko safely hash kar dega (Double Hash Bug Fixed!)
             user.password = newPassword; 
             await user.save();
             

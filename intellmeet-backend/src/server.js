@@ -37,7 +37,6 @@ const io = new Server(server, {
   cors: { origin: ["https://intellmeet.vercel.app", "http://localhost:5173"], methods: ["GET", "POST"] }
 });
 
-// 🔥 STATE MANAGEMENT
 const roomStates = {};
 const activeSockets = {}; 
 
@@ -58,14 +57,12 @@ io.on('connection', (socket) => {
             if (!roomStates[roomId]) {
                 roomStates[roomId] = {
                     isWaitingRoom: meeting.isWaitingRoom,
-                    // 🔥 NAYA: 'record: false' default permission lagaya
                     permissions: { mic: true, video: true, screen: true, record: false },
-                    roles: {}, // Mapped by socket.id for real-time accuracy
-                    approvedUsers: new Set() // Mapped by DB userId to survive refreshes
+                    roles: {}, 
+                    approvedUsers: new Set() 
                 };
             }
 
-            // Assign role to the current active session
             const role = isCreator ? 'creator' : 'guest';
             roomStates[roomId].roles[socket.id] = role;
 
@@ -73,7 +70,6 @@ io.on('connection', (socket) => {
                 roomStates[roomId].approvedUsers.add(userId);
                 socket.emit('join-approved', { role, permissions: roomStates[roomId].permissions });
             } else {
-                // Send waiting notification to Creator & Co-Hosts
                 for (const [sId, uId] of Object.entries(activeSockets)) {
                     const uRole = roomStates[roomId].roles[sId];
                     if (uRole === 'creator' || uRole === 'co-host') {
@@ -122,7 +118,10 @@ io.on('connection', (socket) => {
         socket.to(roomId).emit('permissions-updated', permissions);
     });
 
-    // --- STANDARD WEBRTC EVENTS ---
+    socket.on('host-ended-meeting', ({ roomId }) => {
+        socket.to(roomId).emit('meeting-ended-by-host');
+    });
+
     socket.on('join-room', ({ roomId, userName }) => {
         socket.join(roomId);
         if (roomStates[roomId]) io.to(roomId).emit('roles-updated', roomStates[roomId].roles);

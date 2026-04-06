@@ -11,7 +11,6 @@ export default function Login() {
   const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
 
-  // 🔥 URL Fix: Anti-Double API protection
   const raw_url = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const API_URL = raw_url.replace(/\/api\/?$/, '');
 
@@ -20,7 +19,7 @@ export default function Login() {
     setError('');
 
     try {
-      // ✅ Ensures the path is always /api/auth/login
+      // Ensures the path is always /api/auth/login
       const response = await axios.post(`${API_URL}/api/auth/login`, {
         email,
         password,

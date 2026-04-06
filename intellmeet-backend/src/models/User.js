@@ -7,13 +7,10 @@ const userSchema = new mongoose.Schema({
     password: { type: String, required: true },
 }, { timestamps: true });
 
-// 🔥 FIX: 'next' ko hamesha ke liye hata diya hai (Modern Mongoose Support)
 userSchema.pre('save', async function () {
-    // Agar password change nahi hua hai, to bas chup-chap wapas laut jao
     if (!this.isModified('password')) {
         return; 
     }
-    // Agar naya password aaya hai, to usko encrypt (hash) karo
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
 });

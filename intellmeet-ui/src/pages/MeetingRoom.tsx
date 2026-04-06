@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore'; 
 
 const peerConnectionConfig = {
@@ -63,7 +63,6 @@ export default function MeetingRoom() {
   const navigate = useNavigate();
   const [socket, setSocket] = useState<Socket | null>(null);
 
-  // 🔥 LOBBY & ROLES STATE (Record added to permissions)
   const [inLobby, setInLobby] = useState(!sessionStorage.getItem(`intellmeet_room_${roomId}`));
   const [isWaiting, setIsWaiting] = useState(false); 
   const [myRole, setMyRole] = useState<'creator' | 'co-host' | 'guest'>('guest');
@@ -106,10 +105,14 @@ export default function MeetingRoom() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState<{ id: number, emoji: string, left: number }[]>([]);
 
-  // 🔥 RECORDING STATES
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+
+  // AI STATES
+  const [fullTranscript, setFullTranscript] = useState<string>('');
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [aiSummaryResult, setAiSummaryResult] = useState<string | null>(null);
 
   const user = useAuthStore((state: any) => state.user);
   
@@ -226,6 +229,15 @@ export default function MeetingRoom() {
     newSocket.on('join-denied', () => { alert("Host declined your request."); sessionStorage.removeItem(`intellmeet_room_${roomId}`); navigate('/dashboard'); });
     newSocket.on('kicked-out', () => { alert("You have been removed from the meeting."); sessionStorage.removeItem(`intellmeet_room_${roomId}`); navigate('/dashboard'); });
     
+    // LISTEN FOR HOST ENDING MEETING
+    newSocket.on('meeting-ended-by-host', () => {
+        showNotification("The host has ended this meeting.", "System");
+        myStream?.getTracks().forEach(t => t.stop());
+        if (isRecording) mediaRecorderRef.current?.stop();
+        sessionStorage.removeItem(`intellmeet_room_${roomId}`);
+        setTimeout(() => navigate(`/summary/${roomId}`), 2000); 
+    });
+
     newSocket.on('roles-updated', (roles) => { 
         setRoomRoles(roles); 
         if (roles[userIdStore]) setMyRole(roles[userIdStore]);
@@ -274,6 +286,7 @@ export default function MeetingRoom() {
     
     newSocket.on('receive-transcript', (data: { text: string }) => {
       setLiveCaption(data.text);
+      setFullTranscript(prev => prev + '\n' + data.text);
       setTimeout(() => setLiveCaption(''), 4000);
     });
 
@@ -298,7 +311,6 @@ export default function MeetingRoom() {
     };
   }, [roomId, userName, navigate, userIdStore]); 
 
-  // 🔥 HOST FORCE-KILL PERMISSIONS LOGIC
   useEffect(() => {
     if (myRole === 'guest') {
         if (!globalPermissions.mic && !isMuted) {
@@ -328,7 +340,6 @@ export default function MeetingRoom() {
             setPinnedUserId(p => p === 'local-screen' ? null : p);
             showNotification("Host disabled screen sharing.");
         }
-        // 🔥 NAYA: Agar host recording disable kar de
         if (!globalPermissions.record && isRecording) {
             mediaRecorderRef.current?.stop();
             setIsRecording(false);
@@ -444,7 +455,9 @@ export default function MeetingRoom() {
         captionTimeout = setTimeout(() => setLiveCaption(''), 4000);
 
         if (isFinalChunk) {
-          socket?.emit('send-transcript', currentText);
+          const finalStr = `${userName}: ${currentText.trim()}`;
+          socket?.emit('send-transcript', finalStr);
+          setFullTranscript(prev => prev + '\n' + finalStr);
         }
       }
     };
@@ -473,6 +486,60 @@ export default function MeetingRoom() {
        try { recognition.stop(); } catch (e) {} 
     };
   }, [isMuted, socket, captionsEnabled, inLobby, isWaiting]); 
+
+  // GENERATE AI SUMMARY FUNCTION
+  const generateAISummary = async () => {
+    if (fullTranscript.length < 20) {
+      alert("Please speak a bit more. Not enough conversation has happened to summarize yet!");
+      return;
+    }
+    setIsGeneratingAI(true);
+    showNotification("AI is analyzing the meeting... please wait.", "IntellMeet AI");
+    try {
+      const base_url = ((import.meta as any).env.VITE_API_URL || 'http://localhost:5000').replace(/\/api\/?$/, '');
+      const token = localStorage.getItem('token'); 
+      const res = await fetch(`${base_url}/api/meetings/summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ transcript: fullTranscript, roomId: roomId })
+      });
+      if (!res.ok) throw new Error("Failed to generate summary");
+      const data = await res.json();
+      setAiSummaryResult(data.summary);
+      showNotification("In-Meeting AI Summary Generated!", "System");
+    } catch (err: any) {
+      console.error(err);
+      showNotification("Failed to generate AI summary.", "Error");
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
+
+  // HOST END MEETING FUNCTION
+  const handleEndMeeting = async () => {
+    if (!window.confirm("Are you sure you want to end this meeting for everyone?")) return;
+    setIsGeneratingAI(true);
+    showNotification("Wrapping up meeting and generating final report...", "System");
+    try {
+      const base_url = ((import.meta as any).env.VITE_API_URL || 'http://localhost:5000').replace(/\/api\/?$/, '');
+      const token = localStorage.getItem('token'); 
+      await fetch(`${base_url}/api/meetings/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ transcript: fullTranscript, roomId: roomId })
+      });
+      socket?.emit('host-ended-meeting', { roomId });
+      myStream?.getTracks().forEach(t => t.stop());
+      if (isRecording) mediaRecorderRef.current?.stop();
+      sessionStorage.removeItem(`intellmeet_room_${roomId}`);
+      navigate(`/summary/${roomId}`); 
+    } catch (err: any) {
+      console.error(err);
+      showNotification("Failed to end meeting properly.", "Error");
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  };
 
   const createPeerConnection = (peerId: string, currentSocket: Socket, stream: MediaStream) => {
     const pc = new RTCPeerConnection(peerConnectionConfig);
@@ -589,7 +656,6 @@ export default function MeetingRoom() {
     }
   };
 
-  // 🔥 RECORDING LOGIC (Non-Breaking)
   const toggleRecording = async () => {
     if (isRecording) {
       mediaRecorderRef.current?.stop();
@@ -750,6 +816,35 @@ export default function MeetingRoom() {
   return (
     <div className="fixed inset-0 h-[100dvh] w-full bg-slate-900 text-white flex overflow-hidden font-sans">
       
+      {/* AI SUMMARY RESULT MODAL */}
+      {aiSummaryResult && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+           <div className="bg-slate-900 border border-purple-500/30 p-6 rounded-2xl max-w-lg w-full shadow-2xl relative">
+              <button onClick={() => setAiSummaryResult(null)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X size={20}/></button>
+              <h2 className="text-2xl font-bold mb-4 flex items-center gap-2 text-purple-400"><Sparkles size={24}/> AI Meeting Summary</h2>
+              <div className="bg-slate-800 p-5 rounded-xl text-slate-200 text-sm leading-relaxed max-h-[60vh] overflow-y-auto custom-scrollbar">
+                {aiSummaryResult.split('\n').map((line, i) => {
+                  if (line.includes('**')) {
+                    const parts = line.split('**');
+                    return (
+                      <p key={`line-${i}`} className="mb-3">
+                        {parts.map((part, index) => 
+                          index % 2 === 1 ? <strong key={`bold-${i}-${index}`} className="text-white bg-slate-950 px-1 rounded">{part}</strong> : <span key={`text-${i}-${index}`}>{part}</span>
+                        )}
+                      </p>
+                    );
+                  }
+                  if (line.trim().startsWith('-') || line.trim().startsWith('*')) {
+                     return <li key={`list-${i}`} className="ml-4 mb-2 text-blue-200">{line.replace(/^[-*]/, '').trim()}</li>
+                  }
+                  return <p key={`para-${i}`} className="mb-3">{line}</p>
+                })}
+              </div>
+              <button onClick={() => setAiSummaryResult(null)} className="mt-6 w-full bg-purple-600 hover:bg-purple-700 text-white py-2 rounded-xl font-bold transition">Close</button>
+           </div>
+        </div>
+      )}
+
       {/* SECURITY MODAL */}
       {showSecurityModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100]">
@@ -771,7 +866,6 @@ export default function MeetingRoom() {
                     <span className="font-medium text-sm">Share Screen</span>
                     <input type="checkbox" checked={globalPermissions.screen} onChange={() => handleSecurityUpdate('screen')} className="w-4 h-4 text-blue-600 rounded" />
                  </label>
-                 {/* 🔥 RECORD MEETING TOGGLE */}
                  <label className="flex items-center justify-between p-3 bg-slate-800 rounded-xl cursor-pointer hover:bg-slate-700 transition">
                     <span className="font-medium text-sm">Record Meeting</span>
                     <input type="checkbox" checked={globalPermissions.record} onChange={() => handleSecurityUpdate('record')} className="w-4 h-4 text-blue-600 rounded" />
@@ -832,6 +926,20 @@ export default function MeetingRoom() {
             {myRole === 'co-host' && <span className="bg-yellow-600 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Co-Host</span>}
           </h2>
           <div className="flex gap-2">
+            
+            {/* AI SUMMARY BUTTON */}
+            <button onClick={generateAISummary} disabled={isGeneratingAI} className="bg-purple-600/20 text-purple-400 border border-purple-500/50 hover:bg-purple-600 hover:text-white px-2 py-1.5 md:px-4 md:py-2 text-xs md:text-base rounded-lg font-bold transition shadow-lg flex items-center gap-1 md:gap-2 mr-2">
+                {isGeneratingAI ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                <span className="hidden sm:inline">AI Summary</span>
+            </button>
+
+            {/* HOST END MEETING BUTTON */}
+            {myRole === 'creator' && (
+                <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-700 px-2 py-1.5 md:px-4 md:py-2 text-xs md:text-base rounded-lg font-bold hover:bg-red-800 transition shadow-lg mr-1 text-white">
+                  End Meeting
+                </button>
+            )}
+
             {(myRole === 'creator' || myRole === 'co-host') && (
               <button onClick={() => setShowSecurityModal(true)} className="bg-slate-800 p-2 rounded-lg hover:bg-slate-700 transition shadow-lg text-blue-400" title="Security">
                 <Shield size={18} />
@@ -844,7 +952,7 @@ export default function MeetingRoom() {
               <Users size={18} />
               {joinRequests.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] h-4 w-4 flex items-center justify-center rounded-full">{joinRequests.length}</span>}
             </button>
-            <button onClick={leaveMeeting} className="bg-red-600 px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded-lg font-bold hover:bg-red-700 transition shadow-lg">
+            <button onClick={leaveMeeting} className="bg-slate-700 px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base rounded-lg font-bold hover:bg-slate-600 transition shadow-lg">
               Leave
             </button>
           </div>
@@ -963,7 +1071,6 @@ export default function MeetingRoom() {
             <MonitorUp size={20} />
           </button>
 
-          {/* 🔥 UPDATED RECORD BUTTON WITH HOST PERMISSION */}
           <button 
             onClick={() => {
                 if (myRole === 'guest' && !globalPermissions.record) return alert("Host has disabled recording for participants.");

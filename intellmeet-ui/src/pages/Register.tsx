@@ -12,7 +12,7 @@ export default function Register() {
   const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
 
-  // 🔥 URL Fix: Anti-Double API protection
+  // URL Fix: Anti-Double API protection
   const raw_url = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const API_URL = raw_url.replace(/\/api\/?$/, '');
 
@@ -21,7 +21,7 @@ export default function Register() {
     setError('');
 
     try {
-      // ✅ Ensures the path is always /api/auth/register
+      // Ensures the path is always /api/auth/register
       const response = await axios.post(`${API_URL}/api/auth/register`, {
         name,
         email,
