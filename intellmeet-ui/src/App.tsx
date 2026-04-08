@@ -392,7 +392,6 @@ const Dashboard = () => {
               <span className="text-[10px] md:text-sm font-medium">Analytics</span>
             </button>
             
-            {/* HIDDEN ON MOBILE: Profile button sirf Desktop Sidebar me dikhega */}
             <button onClick={() => setActiveTab('profile')} className={`hidden md:flex md:flex-row items-center md:gap-3 md:px-4 md:py-3 rounded-xl transition-all md:min-w-0 ${activeTab === 'profile' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
                <User size={22} className="md:w-5 md:h-5" />
                <span className="text-[10px] md:text-sm font-medium">Profile</span>
@@ -418,7 +417,6 @@ const Dashboard = () => {
             </div>
             
             <div className="flex items-center gap-2">
-               {/* NAYA: Mobile me Profile button yahan add kar diya */}
                <button 
                  onClick={() => setActiveTab('profile')} 
                  className={`p-2 rounded-lg transition-colors ${activeTab === 'profile' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700'}`}

@@ -8,14 +8,13 @@ export default function VerifyEmail() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [message, setMessage] = useState('');
   
-  // NAYA: Ye ref check karega ki API pehle call ho chuki hai ya nahi
   const hasFetched = useRef(false);
 
   const raw_url = import.meta.env.VITE_API_URL || 'http://localhost:5000';
   const API_URL = raw_url.replace(/\/api\/?$/, '');
 
   useEffect(() => {
-    // Agar API pehle hit ho chuki hai, toh wapas return kar jao (Double call prevent)
+    
     if (hasFetched.current) return;
     hasFetched.current = true;
 

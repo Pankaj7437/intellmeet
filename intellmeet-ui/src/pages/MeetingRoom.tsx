@@ -924,7 +924,7 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      {/* EMOJI PICKER POPUP (Fixed issue with overflow hiding the popup) */}
+      {/* EMOJI PICKER POPUP */}
       {showEmojiPicker && (
          <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 rounded-full px-4 py-3 flex gap-3 md:gap-4 shadow-[0_0_30px_rgba(0,0,0,0.5)] z-[200] animate-in fade-in slide-in-from-bottom-2">
             {['👍', '👏', '❤️', '😂', '😲', '🎉'].map(emoji => (
