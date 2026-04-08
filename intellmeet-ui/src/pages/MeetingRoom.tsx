@@ -1,12 +1,26 @@
 import { useEffect, useState, useRef, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2, MoreVertical } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2, Send } from 'lucide-react';
 import { useAuthStore } from '../store/authStore'; 
 
 const peerConnectionConfig = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
+
+// CSS for Floating Emojis (Kept outside to prevent re-renders)
+const FloatingEmojiStyles = () => (
+  <style>{`
+    @keyframes floatUp {
+      0% { transform: translateY(0) scale(0.5); opacity: 0; }
+      20% { transform: translateY(-50px) scale(1.2); opacity: 1; }
+      100% { transform: translateY(-400px) scale(1); opacity: 0; }
+    }
+    .emoji-float {
+      animation: floatUp 3s ease-out forwards;
+    }
+  `}</style>
+);
 
 interface VideoPlayerProps {
   stream: MediaStream | null;
@@ -16,9 +30,10 @@ interface VideoPlayerProps {
   isLocal?: boolean;
   isSpeaking?: boolean;
   isHandRaised?: boolean;
+  isScreenShare?: boolean;
 }
 
-const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, isLocal = false, isSpeaking = false, isHandRaised = false }: VideoPlayerProps) => {
+const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, isLocal = false, isSpeaking = false, isHandRaised = false, isScreenShare = false }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -35,13 +50,19 @@ const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, i
   }, [stream, isVideoOff]);
 
   return (
-    <div className={`bg-black h-full w-full relative flex items-center justify-center rounded-2xl overflow-hidden group border-2 shadow-lg transition-all ${isSpeaking ? 'border-blue-500 shadow-blue-500/20 shadow-xl' : 'border-slate-800'}`}>
+    <div className={`bg-slate-900 h-full w-full relative flex items-center justify-center rounded-2xl overflow-hidden group border-2 shadow-lg transition-all ${isSpeaking ? 'border-blue-500 shadow-blue-500/30' : 'border-slate-800'}`}>
       {isVideoOff ? (
         <div className={`h-20 w-20 md:h-24 md:w-24 rounded-full flex items-center justify-center font-bold text-slate-300 text-3xl uppercase shadow-xl border-4 transition-all ${isSpeaking ? 'bg-slate-700 border-blue-500 shadow-blue-500/40' : 'bg-slate-800 border-slate-700'}`}>
           {name ? name.charAt(0) : 'U'}
         </div>
       ) : (
-        <video ref={videoRef} autoPlay playsInline muted={isLocal || isMuted} className="h-full w-full object-contain" />
+        <video 
+           ref={videoRef} 
+           autoPlay 
+           playsInline 
+           muted={isLocal || isMuted} 
+           className={`h-full w-full ${isScreenShare ? 'object-contain bg-black' : 'object-cover'} ${isLocal && !isScreenShare ? 'scale-x-[-1]' : ''}`} 
+        />
       )}
       
       {isHandRaised && (
@@ -50,7 +71,7 @@ const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, i
         </div>
       )}
       
-      <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-slate-900/90 backdrop-blur pl-2 pr-3 py-1.5 rounded-full text-[10px] md:text-xs font-medium border border-slate-700 text-white flex items-center gap-1.5 shadow-lg z-10">
+      <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-slate-900/80 backdrop-blur-md pl-2 pr-3 py-1.5 rounded-lg text-[10px] md:text-xs font-medium border border-slate-700/50 text-white flex items-center gap-1.5 shadow-lg z-10">
         {isMuted ? <MicOff size={14} className="text-red-500" /> : <Mic size={14} className={isSpeaking ? "text-blue-400" : "text-emerald-500"} />}
         <span className="truncate max-w-[100px] md:max-w-[150px]">{name}</span>
       </div>
@@ -62,7 +83,6 @@ export default function MeetingRoom() {
   const { roomId } = useParams();
   const navigate = useNavigate();
   const [socket, setSocket] = useState<Socket | null>(null);
-  const [showTopMenu, setShowTopMenu] = useState(false);
 
   const [inLobby, setInLobby] = useState(!sessionStorage.getItem(`intellmeet_room_${roomId}`));
   const [isWaiting, setIsWaiting] = useState(false); 
@@ -74,8 +94,12 @@ export default function MeetingRoom() {
   
   const [showSidebar, setShowSidebar] = useState(false); 
   const [activeTab, setActiveTab] = useState<'chat' | 'participants'>('chat');
-  const [messages, setMessages] = useState<string[]>([]);
+  const [messages, setMessages] = useState<{text: string, sender: string, time: string}[]>([]);
   const [chatInput, setChatInput] = useState('');
+  
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const typingTimeoutRef = useRef<any>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const [isMuted, setIsMuted] = useState(localStorage.getItem('intellmeet_isMuted') === 'true');
@@ -103,14 +127,13 @@ export default function MeetingRoom() {
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [raisedHands, setRaisedHands] = useState<{ [key: string]: boolean }>({});
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState<{ id: number, emoji: string, left: number }[]>([]);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
   
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
 
-  // AI STATES
   const [fullTranscript, setFullTranscript] = useState<string>('');
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [aiSummaryResult, setAiSummaryResult] = useState<string | null>(null);
@@ -136,7 +159,7 @@ export default function MeetingRoom() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, showSidebar, activeTab]);
+  }, [messages, showSidebar, activeTab, typingUsers]);
 
   useEffect(() => {
     let isMounted = true; 
@@ -230,7 +253,6 @@ export default function MeetingRoom() {
     newSocket.on('join-denied', () => { alert("Host declined your request."); sessionStorage.removeItem(`intellmeet_room_${roomId}`); navigate('/dashboard'); });
     newSocket.on('kicked-out', () => { alert("You have been removed from the meeting."); sessionStorage.removeItem(`intellmeet_room_${roomId}`); navigate('/dashboard'); });
     
-    // LISTEN FOR HOST ENDING MEETING
     newSocket.on('meeting-ended-by-host', () => {
         showNotification("The host has ended this meeting.", "System");
         myStream?.getTracks().forEach(t => t.stop());
@@ -282,7 +304,18 @@ export default function MeetingRoom() {
       if (!showSidebar && data.sender !== userName) {
         showNotification(data.text, data.sender);
       }
-      setMessages(prev => [...prev, `${data.sender}: ${data.text}`]);
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setMessages(prev => [...prev, { text: data.text, sender: data.sender, time }]);
+    });
+
+    newSocket.on('user-typing', (data: { userName: string }) => {
+      if (data.userName !== userName) {
+        setTypingUsers(prev => prev.includes(data.userName) ? prev : [...prev, data.userName]);
+      }
+    });
+
+    newSocket.on('user-stopped-typing', (data: { userName: string }) => {
+      setTypingUsers(prev => prev.filter(n => n !== data.userName));
     });
     
     newSocket.on('receive-transcript', (data: { text: string }) => {
@@ -303,6 +336,7 @@ export default function MeetingRoom() {
     return () => {
       isMounted = false;
       newSocket.disconnect();
+      clearTimeout(typingTimeoutRef.current);
       Object.values(peersRef.current).forEach(pc => pc.close());
       if (audioContextRef.current) audioContextRef.current.close();
 
@@ -311,43 +345,6 @@ export default function MeetingRoom() {
       setLocalScreenStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
     };
   }, [roomId, userName, navigate, userIdStore]); 
-
-  useEffect(() => {
-    if (myRole === 'guest') {
-        if (!globalPermissions.mic && !isMuted) {
-            if (myStream && myStream.getAudioTracks().length > 0) {
-                myStream.getAudioTracks()[0].enabled = false;
-                setIsMuted(true);
-                localStorage.setItem('intellmeet_isMuted', 'true');
-                socket?.emit('media-status-change', { roomId, isMuted: true, isVideoOff });
-                showNotification("Host turned off all microphones.");
-            }
-        }
-        if (!globalPermissions.video && !isVideoOff) {
-            if (myStream && myStream.getVideoTracks().length > 0) {
-                myStream.getVideoTracks()[0].enabled = false;
-                setIsVideoOff(true);
-                localStorage.setItem('intellmeet_isVideoOff', 'true');
-                socket?.emit('media-status-change', { roomId, isMuted, isVideoOff: true });
-                showNotification("Host turned off all cameras.");
-            }
-        }
-        if (!globalPermissions.screen && localScreenStream) {
-            localScreenStream.getTracks().forEach(t => t.stop()); 
-            setLocalScreenStream(null);
-            if (screenSocketRef.current) screenSocketRef.current.disconnect();
-            Object.values(screenPeersRef.current).forEach(pc => pc.close());
-            screenPeersRef.current = {}; 
-            setPinnedUserId(p => p === 'local-screen' ? null : p);
-            showNotification("Host disabled screen sharing.");
-        }
-        if (!globalPermissions.record && isRecording) {
-            mediaRecorderRef.current?.stop();
-            setIsRecording(false);
-            showNotification("Host disabled recording. Your recording has been saved.");
-        }
-    }
-  }, [globalPermissions, myRole, myStream, isMuted, isVideoOff, localScreenStream, roomId, socket, isRecording]);
 
   const handleJoinClick = () => {
     setInLobby(false); 
@@ -488,7 +485,6 @@ export default function MeetingRoom() {
     };
   }, [isMuted, socket, captionsEnabled, inLobby, isWaiting]); 
 
-  // GENERATE AI SUMMARY FUNCTION
   const generateAISummary = async () => {
     if (fullTranscript.length < 20) {
       alert("Please speak a bit more. Not enough conversation has happened to summarize yet!");
@@ -516,7 +512,6 @@ export default function MeetingRoom() {
     }
   };
 
-  // HOST END MEETING FUNCTION
   const handleEndMeeting = async () => {
     if (!window.confirm("Are you sure you want to end this meeting for everyone?")) return;
     setIsGeneratingAI(true);
@@ -719,10 +714,22 @@ export default function MeetingRoom() {
       socket?.emit('update-permissions', { roomId, permissions: newPerms });
   };
 
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setChatInput(e.target.value);
+    if (socket) {
+      socket.emit('user-typing', { roomId, userName });
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        socket.emit('user-stopped-typing', { roomId, userName });
+      }, 2000);
+    }
+  };
+
   const sendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (chatInput.trim() && socket) {
       socket.emit('send-message', { roomId, text: chatInput, sender: userName });
+      socket.emit('user-stopped-typing', { roomId, userName }); 
       setChatInput('');
     }
   };
@@ -772,7 +779,6 @@ export default function MeetingRoom() {
   
   const displayPinnedId = pinnedUserId || autoPinned;
 
-  // LOBBY UI
   if (inLobby) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
@@ -800,7 +806,6 @@ export default function MeetingRoom() {
     );
   }
 
-  // WAITING ROOM UI 
   if (isWaiting) {
       return (
           <div className="fixed inset-0 bg-slate-900 z-[200] flex flex-col items-center justify-center p-4">
@@ -816,7 +821,15 @@ export default function MeetingRoom() {
 
   return (
     <div className="fixed inset-0 h-[100dvh] w-full bg-slate-900 text-white flex overflow-hidden font-sans">
-      
+      <FloatingEmojiStyles />
+
+      {showSidebar && (
+        <div 
+           className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40" 
+           onClick={() => setShowSidebar(false)}
+        />
+      )}
+
       {/* AI SUMMARY RESULT MODAL */}
       {aiSummaryResult && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
@@ -911,7 +924,17 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      <div className={`flex-1 flex flex-col p-2 md:p-4 relative transition-all duration-300 ${showSidebar ? 'md:mr-80' : 'w-full'} h-full`}>
+      {/* EMOJI PICKER POPUP (Fixed issue with overflow hiding the popup) */}
+      {showEmojiPicker && (
+         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 rounded-full px-4 py-3 flex gap-3 md:gap-4 shadow-[0_0_30px_rgba(0,0,0,0.5)] z-[200] animate-in fade-in slide-in-from-bottom-2">
+            {['👍', '👏', '❤️', '😂', '😲', '🎉'].map(emoji => (
+               <button key={emoji} onClick={() => sendReaction(emoji)} className="text-2xl hover:scale-125 transition-transform">{emoji}</button>
+            ))}
+         </div>
+      )}
+
+      {/* MAIN VIDEO AREA */}
+      <div className={`flex-1 flex flex-col p-2 md:p-4 relative transition-all duration-300 ${showSidebar ? 'md:mr-[350px]' : 'w-full'} h-full`}>
         
         {toastNotification && (
            <div className="absolute top-4 right-4 md:top-8 md:right-8 bg-slate-800 border-l-4 border-blue-500 shadow-2xl px-4 py-3 rounded-lg z-50 flex flex-col animate-in slide-in-from-top-4 fade-in duration-300 max-w-xs">
@@ -920,14 +943,38 @@ export default function MeetingRoom() {
            </div>
         )}
 
-        <div className="flex justify-between items-center mb-2 md:mb-4 px-2 z-10">
-          <h2 className="text-base md:text-xl font-bold tracking-tight bg-slate-900/50 backdrop-blur px-3 py-1 rounded-lg flex items-center gap-2">
+        <div className="flex justify-between items-center mb-2 md:mb-4 px-2 z-10 bg-slate-900/60 md:bg-transparent backdrop-blur-md md:backdrop-blur-none rounded-xl md:rounded-none py-2 md:py-0">
+          
+          <h2 className="text-sm md:text-xl font-bold tracking-tight px-2 flex items-center gap-2">
             Room: {roomId} 
-            {myRole === 'creator' && <span className="bg-blue-600 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Host</span>}
-            {myRole === 'co-host' && <span className="bg-yellow-600 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Co-Host</span>}
+            <div className="hidden sm:flex gap-1 ml-2">
+               {myRole === 'creator' && <span className="bg-blue-600 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Host</span>}
+               {myRole === 'co-host' && <span className="bg-yellow-600 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider">Co-Host</span>}
+            </div>
           </h2>
 
           <div className="flex gap-2 items-center relative">
+            
+            {/* MOBILE HEADER */}
+            <div className="md:hidden flex items-center gap-1.5 sm:gap-2">
+               {myRole === 'creator' && (
+                 <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-600 hover:bg-red-700 px-2.5 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold text-white shadow-lg transition flex items-center gap-1">
+                   {isGeneratingAI ? <Loader2 className="animate-spin" size={14} /> : <StopCircle size={14} />} End
+                 </button>
+               )}
+               {(myRole === 'creator' || myRole === 'co-host') && (
+                 <button onClick={() => setShowSecurityModal(true)} className="bg-slate-800 hover:bg-slate-700 p-1.5 rounded-lg text-blue-400 border border-slate-700 transition" title="Host Controls">
+                   <Shield size={16} />
+                 </button>
+               )}
+               <button onClick={() => setShowSettingsModal(true)} className="bg-slate-800 hover:bg-slate-700 p-1.5 rounded-lg text-slate-300 border border-slate-700 transition" title="Settings">
+                 <Settings size={16} />
+               </button>
+               <button onClick={leaveMeeting} className="bg-slate-800 hover:bg-slate-700 px-2.5 sm:px-3 py-1.5 text-[10px] sm:text-xs rounded-lg font-bold border border-slate-700 transition text-white">
+                 Leave
+               </button>
+            </div>
+
             {/* DESKTOP VIEW */}
             <div className="hidden md:flex items-center gap-2">
               <button onClick={generateAISummary} disabled={isGeneratingAI} className="bg-purple-600/20 text-purple-400 border border-purple-500/50 hover:bg-purple-600 hover:text-white px-4 py-2 rounded-lg font-bold transition flex items-center gap-2">
@@ -936,60 +983,29 @@ export default function MeetingRoom() {
               </button>
 
               {myRole === 'creator' && (
-                <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-700 px-4 py-2 rounded-lg font-bold hover:bg-red-800 text-white">
+                <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-700 px-4 py-2 rounded-lg font-bold hover:bg-red-800 text-white shadow-lg transition">
                   End Meeting
                 </button>
               )}
 
               {(myRole === 'creator' || myRole === 'co-host') && (
-                <button onClick={() => setShowSecurityModal(true)} className="bg-slate-800 p-2 rounded-lg text-blue-400">
+                <button onClick={() => setShowSecurityModal(true)} className="bg-slate-800 p-2 rounded-lg text-blue-400 hover:bg-slate-700 transition">
                   <Shield size={18} />
                 </button>
               )}
-              <button onClick={() => setShowSettingsModal(true)} className="bg-slate-800 p-2 rounded-lg text-slate-300">
+              <button onClick={() => setShowSettingsModal(true)} className="bg-slate-800 p-2 rounded-lg text-slate-300 hover:bg-slate-700 transition">
                 <Settings size={18} />
               </button>
-            </div>
-
-            {/* MOBILE VIEW: 3-Dots Dropdown */}
-            <div className="md:hidden flex gap-2">
-              <button onClick={() => setShowTopMenu(!showTopMenu)} className="bg-slate-800 p-2 rounded-lg text-slate-300">
-                <MoreVertical size={18} />
+              <button onClick={leaveMeeting} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 text-sm rounded-lg font-bold transition ml-2">
+                Leave Call
               </button>
-              
-              {showTopMenu && (
-                <div className="absolute top-12 right-0 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl flex flex-col p-2 gap-2 z-[100] w-48">
-                  <button onClick={() => { generateAISummary(); setShowTopMenu(false); }} className="text-left bg-purple-600/20 text-purple-400 px-3 py-2 rounded-lg text-sm font-bold flex items-center gap-2">
-                    <Sparkles size={14}/> AI Summary
-                  </button>
-                  {myRole === 'creator' && (
-                    <button onClick={() => { handleEndMeeting(); setShowTopMenu(false); }} className="text-left bg-red-700 text-white px-3 py-2 rounded-lg text-sm font-bold">
-                      End Meeting
-                    </button>
-                  )}
-                  {(myRole === 'creator' || myRole === 'co-host') && (
-                    <button onClick={() => { setShowSecurityModal(true); setShowTopMenu(false); }} className="text-left text-blue-400 hover:bg-slate-800 px-3 py-2 rounded-lg text-sm flex items-center gap-2">
-                      <Shield size={14}/> Security
-                    </button>
-                  )}
-                  <button onClick={() => { setShowSettingsModal(true); setShowTopMenu(false); }} className="text-left text-slate-300 hover:bg-slate-800 px-3 py-2 rounded-lg text-sm flex items-center gap-2">
-                    <Settings size={14}/> Settings
-                  </button>
-                </div>
-              )}
             </div>
 
-            <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('participants'); }} className="md:hidden bg-slate-800 p-2 rounded-lg relative">
-              <Users size={18} />
-              {joinRequests.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] h-4 w-4 flex items-center justify-center rounded-full">{joinRequests.length}</span>}
-            </button>
-            <button onClick={leaveMeeting} className="bg-slate-700 px-3 py-1.5 text-sm rounded-lg font-bold">
-              Leave
-            </button>
           </div>
         </div>
         
-        <div className={`flex-1 flex overflow-hidden pb-20 md:pb-24 px-1 md:px-2 gap-2 md:gap-4 min-h-0 ${displayPinnedId ? 'flex-col md:flex-row' : 'flex-col'}`}>
+        {/* GRID VIEW FOR VIDEOS */}
+        <div className={`flex-1 flex overflow-hidden pb-[80px] md:pb-24 px-1 md:px-2 gap-2 md:gap-4 min-h-0 ${displayPinnedId ? 'flex-col md:flex-row' : 'flex-col'}`}>
           
           {displayPinnedId === 'local' ? (
             <div className="w-full md:flex-1 h-[60%] md:h-full rounded-2xl shadow-2xl relative cursor-pointer flex-shrink-0 transition-all overflow-hidden" onClick={() => setPinnedUserId(null)}>
@@ -998,7 +1014,7 @@ export default function MeetingRoom() {
             </div>
           ) : displayPinnedId === 'local-screen' && localScreenStream ? (
             <div className="w-full md:flex-1 h-[60%] md:h-full rounded-2xl shadow-2xl relative cursor-pointer flex-shrink-0 transition-all overflow-hidden" onClick={() => setPinnedUserId(null)}>
-              <VideoPlayer stream={localScreenStream} name={`${userName}'s Presentation`} isMuted={true} isVideoOff={false} isLocal={true} />
+              <VideoPlayer stream={localScreenStream} name={`${userName}'s Presentation`} isMuted={true} isVideoOff={false} isLocal={true} isScreenShare={true} />
               <div className="absolute top-3 right-3 bg-black/70 backdrop-blur px-2 py-1 rounded text-xs border border-white/20 z-20">Click to unpin</div>
             </div>
           ) : (displayPinnedId && peerNames[displayPinnedId]) ? (
@@ -1008,14 +1024,14 @@ export default function MeetingRoom() {
             </div>
           ) : null}
 
-          <div className={`grid gap-2 md:gap-4 min-h-0 custom-scrollbar ${displayPinnedId ? 'grid-cols-3 md:grid-cols-1 w-full md:w-64 h-[25%] md:h-full flex-shrink-0 overflow-y-auto content-start auto-rows-[100px] md:auto-rows-[140px]' : `${getGridClasses(totalTiles)} w-full h-full flex-1`}`}>
+          <div className={`grid gap-2 md:gap-4 min-h-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${displayPinnedId ? 'grid-cols-3 md:grid-cols-1 w-full md:w-64 h-[25%] md:h-full flex-shrink-0 overflow-y-auto content-start auto-rows-[100px] md:auto-rows-[140px]' : `${getGridClasses(totalTiles)} w-full h-full flex-1`}`}>
             
             {activePeers.map(id => {
               if (id === displayPinnedId) return null;
               if (id === 'local-screen') {
                  return (
                     <div key={id} onClick={() => setPinnedUserId(id)} className="cursor-pointer transition-transform hover:scale-[1.02] w-full h-full relative min-h-0 min-w-0">
-                      <VideoPlayer stream={localScreenStream!} name={`${userName}'s Presentation`} isMuted={true} isVideoOff={false} isLocal={true} />
+                      <VideoPlayer stream={localScreenStream!} name={`${userName}'s Presentation`} isMuted={true} isVideoOff={false} isLocal={true} isScreenShare={true} />
                     </div>
                  );
               }
@@ -1037,11 +1053,11 @@ export default function MeetingRoom() {
 
             {remainingHiddenCount > 0 && !displayPinnedId && (
               <div onClick={() => { setShowSidebar(true); setActiveTab('participants'); }} className="cursor-pointer transition-transform hover:scale-[1.02] w-full h-full relative min-h-0 min-w-0">
-                <div className="bg-black h-full w-full relative flex items-center justify-center rounded-2xl overflow-hidden group border border-slate-800 shadow-lg">
+                <div className="bg-slate-900 h-full w-full relative flex items-center justify-center rounded-2xl overflow-hidden group border-2 border-slate-800 shadow-lg">
                   <div className="h-20 w-20 md:h-24 md:w-24 rounded-full bg-slate-800 border-2 border-slate-700 flex items-center justify-center font-bold text-slate-300 text-xl md:text-3xl shadow-xl group-hover:bg-slate-700 transition-colors">
                     +{remainingHiddenCount}
                   </div>
-                  <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-slate-900/90 backdrop-blur pl-2 pr-3 py-1.5 rounded-full text-[10px] md:text-xs font-medium border border-slate-700 text-white flex items-center gap-1.5 shadow-lg z-10">
+                  <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-slate-900/90 backdrop-blur pl-2 pr-3 py-1.5 rounded-lg text-[10px] md:text-xs font-medium border border-slate-700 text-white flex items-center gap-1.5 shadow-lg z-10">
                     <Users size={14} className="text-blue-400" />
                     <span>Others</span>
                   </div>
@@ -1058,47 +1074,40 @@ export default function MeetingRoom() {
           </div>
         </div>
 
+        {/* Small overlay video on desktop when someone else is pinned */}
         {displayPinnedId !== 'local' && (
           <div className="absolute bottom-[calc(6rem+env(safe-area-inset-bottom))] right-4 md:bottom-28 md:right-8 w-24 h-36 md:w-48 md:h-32 bg-slate-950 rounded-xl border-2 border-slate-700 overflow-hidden shadow-2xl z-20 transition-all">
              <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} isMuted={isMuted} isVideoOff={isVideoOff} isLocal={true} isSpeaking={speakingPeers['local']} isHandRaised={isHandRaised} />
           </div>
         )}
 
+        {/* Captions */}
         {liveCaption && captionsEnabled && (
-          <div className="absolute bottom-[calc(8rem+env(safe-area-inset-bottom))] md:bottom-36 left-1/2 -translate-x-1/2 bg-black/80 px-4 py-2 md:px-6 md:py-3 rounded-2xl text-center backdrop-blur-md z-20 border border-white/10 shadow-2xl max-w-[90%] md:max-w-[70%] pointer-events-none">
+          <div className="absolute bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-36 left-1/2 -translate-x-1/2 bg-black/80 px-4 py-2 md:px-6 md:py-3 rounded-2xl text-center backdrop-blur-md z-20 border border-white/10 shadow-2xl max-w-[90%] md:max-w-[70%] pointer-events-none">
             <p className="text-white text-xs md:text-base font-medium leading-relaxed">{liveCaption}</p>
           </div>
         )}
 
-        {/* BOTTOM CONTROLS BAR */}
-        <div className="absolute bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-4 py-2 md:px-6 md:py-3 rounded-full flex gap-2 md:gap-4 z-40 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700 w-max items-center">
+        {/* BOTTOM CONTROLS ISLAND */}
+        <div className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] md:bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-2 py-2 md:px-6 md:py-3 rounded-full flex gap-2 md:gap-4 z-40 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700 w-max max-w-[95vw] overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] items-center">
           
-          <button onClick={toggleMute} className={`p-3 md:p-4 rounded-full transition-all duration-200 ${isMuted ? 'bg-red-500 hover:bg-red-600' : (myRole === 'guest' && !globalPermissions.mic ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600')}`}>
+          <button onClick={toggleMute} className={`p-3 md:p-4 rounded-full transition-all duration-200 shrink-0 ${isMuted ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.4)]' : (myRole === 'guest' && !globalPermissions.mic ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600')}`}>
             {isMuted ? <MicOff size={20} /> : <Mic size={20} />}
           </button>
           
-          <button onClick={toggleVideo} className={`p-3 md:p-4 rounded-full transition-all duration-200 ${isVideoOff ? 'bg-red-500 hover:bg-red-600' : (myRole === 'guest' && !globalPermissions.video ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600')}`}>
+          <button onClick={toggleVideo} className={`p-3 md:p-4 rounded-full transition-all duration-200 shrink-0 ${isVideoOff ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.4)]' : (myRole === 'guest' && !globalPermissions.video ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600')}`}>
             {isVideoOff ? <VideoOff size={20} /> : <VideoIcon size={20} />}
           </button>
 
-          <button onClick={toggleRaiseHand} className={`p-3 md:p-4 rounded-full transition-all duration-200 ${isHandRaised ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`} title="Raise Hand">
+          <button onClick={toggleRaiseHand} className={`p-3 md:p-4 rounded-full transition-all duration-200 shrink-0 ${isHandRaised ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`} title="Raise Hand">
             <Hand size={20} />
           </button>
 
-          <div className="relative">
-             <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className="p-3 md:p-4 rounded-full transition-all duration-200 bg-slate-700 hover:bg-slate-600 text-slate-300" title="Reactions">
-               <Smile size={20} />
-             </button>
-             {showEmojiPicker && (
-               <div className="absolute bottom-[120%] left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 rounded-full px-3 py-2 flex gap-2 shadow-2xl">
-                  {['👍', '👏', '❤️', '😂', '😲', '🎉'].map(emoji => (
-                     <button key={emoji} onClick={() => sendReaction(emoji)} className="text-xl hover:scale-125 transition-transform">{emoji}</button>
-                  ))}
-               </div>
-             )}
-          </div>
+          <button onClick={() => setShowEmojiPicker(!showEmojiPicker)} className={`p-3 md:p-4 rounded-full transition-all duration-200 shrink-0 ${showEmojiPicker ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600 text-slate-300'}`} title="Reactions">
+            <Smile size={20} />
+          </button>
 
-          <button onClick={toggleScreenShare} className={`p-3 md:p-4 rounded-full transition-all duration-200 hidden md:block ${localScreenStream ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : (myRole === 'guest' && !globalPermissions.screen ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-slate-300')}`} title="Present Screen">
+          <button onClick={toggleScreenShare} className={`p-3 md:p-4 rounded-full transition-all duration-200 hidden md:block shrink-0 ${localScreenStream ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : (myRole === 'guest' && !globalPermissions.screen ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-slate-300')}`} title="Present Screen">
             <MonitorUp size={20} />
           </button>
 
@@ -1107,67 +1116,101 @@ export default function MeetingRoom() {
                 if (myRole === 'guest' && !globalPermissions.record) return alert("Host has disabled recording for participants.");
                 toggleRecording();
             }} 
-            className={`p-3 md:p-4 rounded-full transition-all duration-200 hidden md:block ${isRecording ? 'bg-red-600 hover:bg-red-700 text-white shadow-[0_0_15px_rgba(220,38,38,0.6)] animate-pulse' : (myRole === 'guest' && !globalPermissions.record ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-slate-300')}`} 
+            className={`p-3 md:p-4 rounded-full transition-all duration-200 hidden md:block shrink-0 ${isRecording ? 'bg-red-600 hover:bg-red-700 text-white shadow-[0_0_15px_rgba(220,38,38,0.6)] animate-pulse' : (myRole === 'guest' && !globalPermissions.record ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600 text-slate-300')}`} 
             title={isRecording ? "Stop Recording" : "Start Recording"}
           >
             {isRecording ? <StopCircle size={20} /> : <Circle size={20} />}
           </button>
 
-          <div className="w-px h-8 bg-slate-700 mx-1 md:mx-2 hidden sm:block"></div>
+          <div className="w-px h-8 bg-slate-600 mx-0.5 md:mx-2 shrink-0"></div>
           
-          <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('chat'); }} className={`p-3 md:p-4 rounded-full transition-all hidden md:block ${showSidebar && activeTab === 'chat' ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'}`}>
+          <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('chat'); }} className={`p-3 md:p-4 rounded-full transition-all shrink-0 md:hidden block ${showSidebar && activeTab === 'chat' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-slate-700 hover:bg-slate-600'}`}>
+            <MessageSquare size={20} />
+          </button>
+
+          <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('chat'); }} className={`p-3 md:p-4 rounded-full transition-all hidden md:block shrink-0 ${showSidebar && activeTab === 'chat' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-slate-700 hover:bg-slate-600'}`}>
             <MessageSquare size={20} />
           </button>
           
-          <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('participants'); }} className={`p-3 md:p-4 rounded-full transition-all hidden md:block relative ${showSidebar && activeTab === 'participants' ? 'bg-blue-600 text-white' : 'bg-slate-700 hover:bg-slate-600'}`}>
+          <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('participants'); }} className={`p-3 md:p-4 rounded-full transition-all hidden md:block shrink-0 relative ${showSidebar && activeTab === 'participants' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-slate-700 hover:bg-slate-600'}`}>
             <Users size={20} />
             {joinRequests.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] h-5 w-5 flex items-center justify-center rounded-full border-2 border-slate-900">{joinRequests.length}</span>}
           </button>
         </div>
       </div>
 
-      <div className={`${showSidebar ? 'translate-x-0' : 'translate-x-full'} fixed top-0 right-0 h-[100dvh] w-full md:w-80 bg-slate-900 border-l border-slate-800 shadow-2xl z-50 flex flex-col transition-transform duration-300 ease-in-out`}>
+      {/* CHAT & SIDEBAR COMPONENT */}
+      <div className={`${showSidebar ? 'translate-x-0' : 'translate-x-full'} fixed top-0 right-0 h-[100dvh] w-full md:w-[350px] bg-slate-900 border-l border-slate-800 shadow-[0_0_50px_rgba(0,0,0,0.5)] z-[60] flex flex-col transition-transform duration-300 ease-in-out`}>
         
-        <div className="flex items-center justify-between p-2 border-b border-slate-800 bg-slate-950">
-          <div className="flex gap-1 w-full">
-             <button onClick={() => setActiveTab('chat')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${activeTab === 'chat' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>Chat</button>
-             <button onClick={() => setActiveTab('participants')} className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors relative ${activeTab === 'participants' ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white'}`}>
+        <div className="flex items-center justify-between p-3 border-b border-slate-800 bg-slate-950">
+          <div className="flex gap-2 w-full bg-slate-800/50 p-1 rounded-xl">
+             <button onClick={() => setActiveTab('chat')} className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-colors ${activeTab === 'chat' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Chat</button>
+             <button onClick={() => setActiveTab('participants')} className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-colors relative ${activeTab === 'participants' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
                 People ({Object.keys(peerNames).length + 1})
-                {joinRequests.length > 0 && <span className="absolute top-2 right-2 bg-red-500 text-white text-[10px] px-1.5 py-0.5 rounded-full">{joinRequests.length}</span>}
+                {joinRequests.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] h-4 w-4 flex items-center justify-center rounded-full">{joinRequests.length}</span>}
              </button>
           </div>
-          <button onClick={() => setShowSidebar(false)} className="ml-2 text-slate-400 hover:text-white bg-slate-800 p-2 rounded-lg">
-            <X size={16} />
+          <button onClick={() => setShowSidebar(false)} className="ml-3 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-2 rounded-xl transition-colors">
+            <X size={18} />
           </button>
         </div>
         
         {activeTab === 'chat' && (
-          <>
-            <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3 custom-scrollbar">
+          <div className="flex-1 flex flex-col bg-slate-900/50">
+            <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
               {messages.length === 0 ? (
-                 <div className="text-center text-slate-500 text-sm mt-10">No messages yet.</div>
+                 <div className="text-center flex flex-col items-center justify-center h-full text-slate-500">
+                    <MessageSquare size={48} className="mb-4 opacity-20" />
+                    <p className="text-sm font-medium">Say hello to everyone!</p>
+                 </div>
               ) : (
                 messages.map((m, i) => {
-                  const isMe = m.startsWith(`${userName}:`);
+                  const isMe = m.sender === userName;
                   return (
-                  <div key={i} className={`p-3 rounded-2xl text-sm break-words border ${isMe ? 'bg-blue-900/30 border-blue-800/50 text-blue-100 self-end' : 'bg-slate-800/50 border-slate-700/50 text-slate-200 self-start'} max-w-[90%]`}>
-                    {m}
+                  <div key={i} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} w-full`}>
+                    {!isMe && <span className="text-[10px] text-slate-400 mb-1 ml-1">{m.sender}</span>}
+                    <div className={`p-3 text-sm break-words shadow-sm relative ${isMe ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm' : 'bg-slate-800 text-slate-200 rounded-2xl rounded-tl-sm border border-slate-700/50'} max-w-[85%]`}>
+                      {m.text}
+                      <span className={`block text-[9px] mt-1 text-right ${isMe ? 'text-blue-200' : 'text-slate-500'}`}>{m.time}</span>
+                    </div>
                   </div>
                 )})
               )}
-              <div ref={messagesEndRef} />
+              <div ref={messagesEndRef} className="h-2" />
             </div>
-            <form onSubmit={sendMessage} className="p-4 border-t border-slate-800 bg-slate-950 pb-[calc(1rem+env(safe-area-inset-bottom))]">
-              <div className="flex gap-2">
-                <input type="text" value={chatInput} onChange={e => setChatInput(e.target.value)} className="flex-1 bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm focus:outline-none focus:border-blue-500 text-white" placeholder="Message..." />
-                <button type="submit" className="bg-blue-600 px-4 rounded-xl font-bold hover:bg-blue-700 text-sm transition-all">Send</button>
+            
+            <div className="px-4 h-6 flex items-center">
+              {typingUsers.length > 0 && (
+                <div className="text-xs text-blue-400 italic flex items-center gap-2 font-medium">
+                  <div className="flex gap-0.5">
+                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></span>
+                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></span>
+                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></span>
+                  </div>
+                  {typingUsers.length === 1 ? `${typingUsers[0]} is typing...` : 'Multiple people are typing...'}
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={sendMessage} className="p-3 border-t border-slate-800 bg-slate-950 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+              <div className="flex gap-2 items-center bg-slate-900 border border-slate-700 rounded-xl p-1 pr-2 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
+                <input 
+                  type="text" 
+                  value={chatInput} 
+                  onChange={handleTyping} 
+                  className="flex-1 bg-transparent px-3 py-2 text-sm focus:outline-none text-white placeholder-slate-500" 
+                  placeholder="Send a message..." 
+                />
+                <button type="submit" disabled={!chatInput.trim()} className="bg-blue-600 disabled:opacity-50 p-2 rounded-lg text-white transition-all hover:bg-blue-700 hover:shadow-lg">
+                  <Send size={16} className="ml-0.5" />
+                </button>
               </div>
             </form>
-          </>
+          </div>
         )}
 
         {activeTab === 'participants' && (
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+          <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] p-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
              
              {(myRole === 'creator' || myRole === 'co-host') && joinRequests.length > 0 && (
                 <div className="mb-6">
@@ -1255,24 +1298,18 @@ export default function MeetingRoom() {
         )}
       </div>
 
+      {/* FLOATING EMOJIS */}
       <div className="fixed inset-0 pointer-events-none z-[1000] overflow-hidden">
         {floatingEmojis.map(emoji => (
            <div 
              key={emoji.id} 
-             className="absolute bottom-24 text-4xl" 
-             style={{ left: `${emoji.left}%`, animation: 'floatUp 3s ease-out forwards' }}
+             className="absolute bottom-24 text-5xl emoji-float" 
+             style={{ left: `${emoji.left}%` }}
            >
              {emoji.emoji}
            </div>
         ))}
       </div>
-      <style>{`
-        @keyframes floatUp {
-          0% { transform: translateY(0) scale(0.5); opacity: 0; }
-          20% { transform: translateY(-50px) scale(1.2); opacity: 1; }
-          100% { transform: translateY(-300px) scale(1); opacity: 0; }
-        }
-      `}</style>
 
     </div>
   );

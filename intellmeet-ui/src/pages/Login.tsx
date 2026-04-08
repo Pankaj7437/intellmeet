@@ -19,7 +19,6 @@ export default function Login() {
     setError('');
 
     try {
-      // Ensures the path is always /api/auth/login
       const response = await axios.post(`${API_URL}/api/auth/login`, {
         email,
         password,
@@ -27,7 +26,6 @@ export default function Login() {
 
       const token = response.data.accessToken || response.data.token;
       
-      // Zustand store update
       setAuth(token, response.data.user);
       
       navigate('/dashboard');
@@ -63,7 +61,10 @@ export default function Login() {
           </div>
           
           <div>
-            <label className="block text-slate-300 text-xs font-semibold uppercase tracking-wider mb-2 ml-1">Password</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-slate-300 text-xs font-semibold uppercase tracking-wider ml-1">Password</label>
+              <Link to="/forgot-password" className="text-blue-500 hover:text-blue-400 text-xs font-semibold transition-colors">Forgot Password?</Link>
+            </div>
             <input 
               type="password" 
               value={password}

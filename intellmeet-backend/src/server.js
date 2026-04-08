@@ -92,6 +92,14 @@ io.on('connection', (socket) => {
         io.to(targetSocketId).emit('join-denied'); 
     });
 
+    socket.on('user-typing', ({ roomId, userName }) => {
+        socket.to(roomId).emit('user-typing', { userName });
+    });
+
+    socket.on('user-stopped-typing', ({ roomId, userName }) => {
+        socket.to(roomId).emit('user-stopped-typing', { userName });
+    });
+
     socket.on('make-cohost', ({ targetSocketId, roomId }) => {
         if(roomStates[roomId]) { 
             roomStates[roomId].roles[targetSocketId] = 'co-host'; 

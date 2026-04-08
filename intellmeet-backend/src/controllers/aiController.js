@@ -36,7 +36,7 @@ exports.endMeetingAndSummarize = async (req, res) => {
         let extractedTasks = [];
 
         if (transcript && transcript.trim().length >= 10 && apiKey) {
-            // Explicitly asking AI to use bullet points for action items
+            
             const prompt = `You are a professional Executive Assistant. Analyze this entire video meeting transcript and provide:\n1. **Final Meeting Summary**\n2. **Action Items** (List each specific task strictly as a bullet point starting with '-' or '*')\n\nTranscript:\n"""\n${transcript}\n"""`;
 
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -48,27 +48,23 @@ exports.endMeetingAndSummarize = async (req, res) => {
             const data = await response.json();
             if (response.ok) {
                 finalSummary = data.choices[0].message.content;
-                
-                //  BETTER EXTRACTION LOGIC
+         
                 const lines = finalSummary.split('\n');
                 let captureTasks = false;
                 
                 lines.forEach(line => {
                     const lowerLine = line.toLowerCase();
-                    // Start capturing when heading is found
                     if (lowerLine.includes('action items') || lowerLine.includes('next steps')) {
                         captureTasks = true;
-                        return; // skip the heading line itself
+                        return; 
                     }
                     
                     if (captureTasks) {
-                        // Stop if we hit another major markdown heading
                         if (line.startsWith('#') || (line.startsWith('**') && !line.trim().startsWith('-') && !line.trim().startsWith('*'))) {
                             captureTasks = false;
                             return;
                         }
 
-                        // Capture only bulleted or numbered lines as separate tasks
                         if (line.trim().startsWith('-') || line.trim().startsWith('*') || /^\d+\./.test(line.trim())) {
                             let cleanText = line.replace(/^[-*\d.]\s*/, '').replace(/\*\*/g, '').trim();
                             if(cleanText.length > 3) {

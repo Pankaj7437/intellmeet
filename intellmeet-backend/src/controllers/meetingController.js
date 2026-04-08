@@ -3,13 +3,27 @@ const Meeting = require('../models/meeting');
 exports.scheduleMeeting = async (req, res) => {
     try {
         const { title, date, time, roomId, isWaitingRoom } = req.body;
-        const meetDate = date || new Date().toISOString().split('T')[0];
-        const meetTime = time || new Date().toTimeString().split(' ')[0];
+        
+        const now = new Date();
+        const meetDate = date || now.toISOString().split('T')[0];
+        
+        const hours = now.getHours().toString().padStart(2, '0');
+        const minutes = now.getMinutes().toString().padStart(2, '0');
+        const meetTime = time || `${hours}:${minutes}`;
+
+        let finalTitle = title;
+        if (!title || title.trim() === '' || title === 'Instant Meeting') {
+            const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            const month = monthNames[now.getMonth()];
+            const day = now.getDate();
+            
+            finalTitle = `Instant Sync (${month} ${day}, ${meetTime})`;
+        }
 
         const newMeeting = await Meeting.create({ 
             host: req.user._id, 
             participants: [], 
-            title: title || 'Instant Meeting', 
+            title: finalTitle, 
             date: meetDate, 
             time: meetTime, 
             roomId,
@@ -31,7 +45,10 @@ exports.getMeetings = async (req, res) => {
 
         const meetings = await Meeting.find({ 
             $or: [{ host: req.user._id }, { participants: req.user._id }]
-        }).sort({ date: 1, time: 1 });
+        })
+        .populate('host', 'name email')
+        .populate('participants', 'name email')
+        .sort({ date: 1, time: 1 });
         
         res.status(200).json(meetings);
     } catch (error) { res.status(500).json({ message: error.message }); }
@@ -39,7 +56,10 @@ exports.getMeetings = async (req, res) => {
 
 exports.getMeetingByRoomId = async (req, res) => {
     try {
-        const meeting = await Meeting.findOne({ roomId: req.params.roomId });
+        const meeting = await Meeting.findOne({ roomId: req.params.roomId })
+            .populate('host', 'name email')
+            .populate('participants', 'name email');
+            
         if (!meeting) return res.status(404).json({ message: 'Meeting not found' });
         res.status(200).json(meeting);
     } catch (error) { res.status(500).json({ message: error.message }); }
@@ -71,7 +91,9 @@ exports.updateTaskStatus = async (req, res) => {
             { roomId: roomId, "tasks.id": taskId },
             { $set: { "tasks.$.status": status } },
             { new: true }
-        );
+        )
+        .populate('host', 'name email')
+        .populate('participants', 'name email');
 
         if(!meeting) return res.status(404).json({message: "Task or Meeting not found"});
         res.status(200).json(meeting);
@@ -85,7 +107,10 @@ exports.deleteTask = async (req, res) => {
             { roomId: roomId },
             { $pull: { tasks: { id: taskId } } },
             { new: true }
-        );
+        )
+        .populate('host', 'name email')
+        .populate('participants', 'name email');
+
         if(!meeting) return res.status(404).json({message: "Meeting not found"});
         res.status(200).json(meeting);
     } catch (error) { res.status(500).json({ message: error.message }); }
