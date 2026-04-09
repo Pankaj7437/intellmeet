@@ -1,5 +1,6 @@
 const express = require('express');
 const dotenv = require('dotenv');
+dotenv.config();
 const cors = require('cors');
 const helmet = require('helmet');
 const http = require('http');
@@ -11,7 +12,6 @@ const authRoutes = require('./routes/authRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
 const Meeting = require('./models/meeting'); 
 
-dotenv.config();
 const app = express();
 const server = http.createServer(app);
 
@@ -42,7 +42,7 @@ const activeSockets = {};
 
 io.on('connection', (socket) => {
 
-    socket.on('join-request', async ({ roomId, userId, userName }) => {
+    socket.on('join-request', async ({ roomId, userId, userName, profilePic }) => {
         try {
             const meeting = await Meeting.findOne({ roomId });
             if (!meeting) return socket.emit('join-error', 'Meeting not found or invalid Link!');
@@ -73,7 +73,7 @@ io.on('connection', (socket) => {
                 for (const [sId, uId] of Object.entries(activeSockets)) {
                     const uRole = roomStates[roomId].roles[sId];
                     if (uRole === 'creator' || uRole === 'co-host') {
-                        io.to(sId).emit('participant-waiting', { socketId: socket.id, targetUserId: userId, userName });
+                        io.to(sId).emit('participant-waiting', { socketId: socket.id, targetUserId: userId, userName, profilePic });
                     }
                 }
             }
@@ -130,17 +130,21 @@ io.on('connection', (socket) => {
         socket.to(roomId).emit('meeting-ended-by-host');
     });
 
-    socket.on('join-room', ({ roomId, userName }) => {
+    socket.on('join-room', ({ roomId, userName, profilePic }) => {
         socket.join(roomId);
         if (roomStates[roomId]) io.to(roomId).emit('roles-updated', roomStates[roomId].roles);
         
-        socket.to(roomId).emit('user-connected', { userId: socket.id, userName });
+        socket.to(roomId).emit('user-connected', { userId: socket.id, userName, profilePic });
         socket.on('send-message', (message) => io.to(roomId).emit('receive-message', message));
         socket.on('media-status-change', (data) => socket.to(data.roomId).emit('peer-media-status', { userId: socket.id, isMuted: data.isMuted, isVideoOff: data.isVideoOff }));
         socket.on('request-media-status', (targetUserId) => socket.to(targetUserId).emit('request-media-status-from', socket.id));
         socket.on('send-transcript', (text) => socket.to(roomId).emit('receive-transcript', { text, sender: socket.id }));
-        socket.on('offer', (data) => socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id, userName: data.userName }));
-        socket.on('answer', (data) => socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id, userName: data.userName }));
+        
+        socket.on('offer', (data) => socket.to(data.target).emit('offer', { sdp: data.sdp, caller: socket.id, userName: data.userName, profilePic: data.profilePic }));
+        socket.on('answer', (data) => socket.to(data.target).emit('answer', { sdp: data.sdp, caller: socket.id, userName: data.userName, profilePic: data.profilePic }));
+        
+        socket.on('update-notes', (data) => socket.to(data.roomId).emit('receive-notes', data.notes));
+        socket.on('add-task', (data) => socket.to(data.roomId).emit('receive-task', data.task));
         socket.on('speaking-status', (data) => socket.to(data.roomId).emit('peer-speaking', { userId: socket.id, isSpeaking: data.isSpeaking }));
         socket.on('toggle-raise-hand', (data) => socket.to(data.roomId).emit('peer-raised-hand', { userId: socket.id, userName: data.userName, isRaised: data.isRaised }));
         socket.on('send-reaction', (data) => socket.to(data.roomId).emit('peer-reaction', { userId: socket.id, emoji: data.emoji }));

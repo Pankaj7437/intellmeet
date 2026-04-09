@@ -2,7 +2,7 @@ import { useState, useEffect, type ReactNode, type FormEvent } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { 
   Video, Calendar, User, LogOut, Copy, Plus, 
-  Users, Edit2, Lock, Loader2, X, Trash2, Clock, ShieldAlert, History, Link as LinkIcon, FileText, CheckSquare, BarChart3, Target, CheckCircle2, TrendingUp, Activity
+  Users, Edit2, Lock, Loader2, X, Trash2, Clock, ShieldAlert, History, Link as LinkIcon, FileText, CheckSquare, BarChart3, Target, CheckCircle2, TrendingUp, Activity, Download
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell 
@@ -41,6 +41,7 @@ interface UserData {
   name?: string;
   firstName?: string;
   email?: string;
+  profilePic?: string;
 }
 
 interface AuthState {
@@ -84,6 +85,7 @@ const Dashboard = () => {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
 
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState('');
@@ -220,6 +222,40 @@ const Dashboard = () => {
     }
   };
 
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('File size should be less than 2MB', 'error');
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    const formData = new FormData();
+    formData.append('avatar', file);
+
+    try {
+      const res = await fetch(`${API_URL}/auth/profile/avatar`, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+      
+      if (res.ok) {
+        const updatedUser = await res.json();
+        setUser(updatedUser); 
+        showToast('Profile picture updated!', 'success');
+      } else {
+        throw new Error('Failed to upload');
+      }
+    } catch (err) {
+      showToast('Error uploading profile picture', 'error');
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
+
   const handleUpdatePassword = async () => {
     if (!currentPassword || newPassword.length < 6) return;
     setIsUpdatingPassword(true);
@@ -249,7 +285,6 @@ const Dashboard = () => {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ status: newStatus })
       });
-      
       if (res.ok) {
         setScheduledMeetings(prev => prev.map(m => {
           if (m.roomId === roomId && m.tasks) {
@@ -271,7 +306,6 @@ const Dashboard = () => {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      
       if (res.ok) {
         setScheduledMeetings(prev => prev.map(m => {
           if (m.roomId === roomId && m.tasks) {
@@ -286,6 +320,42 @@ const Dashboard = () => {
     }
   };
 
+  const handleDragStart = (e: React.DragEvent, taskId: string, roomId: string) => {
+    e.dataTransfer.setData('taskId', taskId);
+    e.dataTransfer.setData('roomId', roomId);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); 
+  };
+
+  const handleDrop = async (e: React.DragEvent, newStatus: 'todo' | 'in-progress' | 'done') => {
+    e.preventDefault();
+    const taskId = e.dataTransfer.getData('taskId');
+    const roomId = e.dataTransfer.getData('roomId');
+    if (taskId && roomId) {
+      await handleUpdateTaskStatus(roomId, taskId, newStatus);
+    }
+  };
+
+  const exportAnalyticsCSV = () => {
+    if (meetingWiseData.length === 0) {
+      showToast("No data to export", "error");
+      return;
+    }
+    const headers = ['Meeting Title,Date,Total Tasks,Done Tasks,Progress %'];
+    const rows = meetingWiseData.map(m => `"${m.fullTitle}",${m.date},${m.total},${m['Done']},${m.progress}%`);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "IntellMeet_Analytics.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast("Analytics Exported Successfully!", "success");
+  };
+
   const now = new Date();
   const currentDate = now.toISOString().split('T')[0];
   const currentTime = now.toTimeString().split(' ')[0];
@@ -293,10 +363,7 @@ const Dashboard = () => {
   const upcomingMeetings = scheduledMeetings.filter(m => m.status !== 'Completed' && (m.date > currentDate || (m.date === currentDate && m.time >= currentTime)));
   const pastMeetings = scheduledMeetings.filter(m => m.status === 'Completed' || m.date < currentDate || (m.date === currentDate && m.time < currentTime));
 
-  const allTasks = scheduledMeetings.flatMap(m => 
-    (m.tasks || []).map(t => ({ ...t, roomId: m.roomId, roomTitle: m.title }))
-  );
-  
+  const allTasks = scheduledMeetings.flatMap(m => (m.tasks || []).map(t => ({ ...t, roomId: m.roomId, roomTitle: m.title })));
   const todoTasks = allTasks.filter(t => t.status === 'todo');
   const inProgressTasks = allTasks.filter(t => t.status === 'in-progress');
   const doneTasks = allTasks.filter(t => t.status === 'done');
@@ -308,8 +375,7 @@ const Dashboard = () => {
   }, {} as Record<string, number>);
   
   const trendData = Object.keys(meetingDatesMap).slice(-7).map(date => ({
-    name: date,
-    Meetings: meetingDatesMap[date]
+    name: date, Meetings: meetingDatesMap[date]
   }));
 
   const pieChartData = [
@@ -363,7 +429,6 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* --- SIDEBAR (Desktop Only for Profile) / MOBILE BOTTOM NAV --- */}
       <div className="w-full md:w-64 bg-slate-900 border-t md:border-t-0 md:border-r border-slate-800 flex flex-row md:flex-col justify-between fixed bottom-0 md:relative z-50 md:z-auto order-last md:order-first px-2 md:px-0 pb-safe md:pb-0">
          <div className="hidden md:flex items-center gap-3 p-6 border-b border-slate-800">
             <div className="bg-blue-600 p-2 rounded-xl"><Video size={24} className="text-white" /></div>
@@ -391,9 +456,12 @@ const Dashboard = () => {
               <BarChart3 size={22} className="md:w-5 md:h-5" />
               <span className="text-[10px] md:text-sm font-medium">Analytics</span>
             </button>
-            
             <button onClick={() => setActiveTab('profile')} className={`hidden md:flex md:flex-row items-center md:gap-3 md:px-4 md:py-3 rounded-xl transition-all md:min-w-0 ${activeTab === 'profile' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
-               <User size={22} className="md:w-5 md:h-5" />
+               {user?.profilePic ? (
+                  <img src={user.profilePic} className="md:w-6 md:h-6 rounded-full object-cover border border-slate-700" alt="Profile" />
+               ) : (
+                  <User size={22} className="md:w-5 md:h-5" />
+               )}
                <span className="text-[10px] md:text-sm font-medium">Profile</span>
             </button>
          </div>
@@ -406,42 +474,38 @@ const Dashboard = () => {
          </div>
       </div>
 
-      {/* --- MAIN CONTENT AREA --- */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden bg-slate-950 pb-20 md:pb-0">
-         
-         {/* MOBILE TOP HEADER */}
          <div className="md:hidden flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900 sticky top-0 z-40 shadow-md">
             <div className="flex items-center gap-2">
                <div className="bg-blue-600 p-1.5 rounded-lg"><Video size={20} className="text-white" /></div>
                <h1 className="text-lg font-bold tracking-tight">IntellMeet</h1>
             </div>
-            
-            <div className="flex items-center gap-2">
-               <button 
-                 onClick={() => setActiveTab('profile')} 
-                 className={`p-2 rounded-lg transition-colors ${activeTab === 'profile' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700'}`}
-                 title="Profile Settings"
-               >
-                 <User size={18} />
+            <div className="flex items-center gap-3">
+               <button onClick={() => setActiveTab('profile')} className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors border-2 ${activeTab === 'profile' ? 'border-blue-500' : 'border-transparent hover:border-slate-700'}`}>
+                 {user?.profilePic ? (
+                    <img src={user.profilePic} alt="Profile" className="h-full w-full rounded-full object-cover" />
+                 ) : (
+                    <div className="bg-slate-800 h-full w-full rounded-full flex items-center justify-center text-slate-300">
+                      <User size={16} />
+                    </div>
+                 )}
                </button>
-
-               <button 
-                 onClick={() => { logout(); navigate('/'); }} 
-                 className="text-slate-400 hover:text-red-400 bg-slate-800 hover:bg-slate-700 p-2 rounded-lg transition-colors"
-                 title="Logout"
-               >
-                 <LogOut size={18} />
+               <button onClick={() => { logout(); navigate('/'); }} className="text-slate-400 hover:text-red-400 bg-slate-800 hover:bg-slate-700 p-2 rounded-lg transition-colors">
+                 <LogOut size={16} />
                </button>
             </div>
          </div>
 
          <div className="max-w-7xl mx-auto p-4 sm:p-6 md:p-8 mt-2 md:mt-4">
-            
             {activeTab === 'home' && (
                <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
                   <div className="flex items-center gap-4 mb-6 md:mb-8">
-                     <div className="h-14 w-14 md:h-16 md:w-16 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-xl md:text-2xl font-bold border-[3px] md:border-4 border-slate-800 shadow-xl uppercase">
-                        {(user?.name || user?.firstName || 'U').charAt(0)}
+                     <div className="h-14 w-14 md:h-16 md:w-16 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-xl md:text-2xl font-bold border-[3px] md:border-4 border-slate-800 shadow-xl uppercase overflow-hidden">
+                        {user?.profilePic ? (
+                           <img src={user.profilePic} alt="Profile" className="h-full w-full object-cover" />
+                        ) : (
+                           (user?.name || user?.firstName || 'U').charAt(0)
+                        )}
                      </div>
                      <div>
                         <h2 className="text-xl sm:text-2xl md:text-3xl font-bold">Welcome, {user?.name || user?.firstName || 'User'}!</h2>
@@ -485,13 +549,7 @@ const Dashboard = () => {
                            <p className="text-slate-400 text-sm mb-6">Enter a room code or full link to join.</p>
                         </div>
                         <form onSubmit={handleJoin} className="space-y-3">
-                           <input 
-                              type="text" 
-                              placeholder="Enter Link or Code" 
-                              value={joinCode}
-                              onChange={(e) => setJoinCode(e.target.value)}
-                              className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg p-3 text-sm outline-none transition-all"
-                           />
+                           <input type="text" placeholder="Enter Link or Code" value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg p-3 text-sm outline-none transition-all" />
                            <button type="submit" disabled={!joinCode.trim()} className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-colors shadow-md text-sm md:text-base">
                               Join Meeting
                            </button>
@@ -526,7 +584,6 @@ const Dashboard = () => {
                                 </span>
                               )}
                               <p className="text-sm text-slate-400 mb-4 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {meeting.time}</p>
-                              
                               <div className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800 mb-4">
                                  <span className="text-xs font-mono text-slate-300 font-bold tracking-wider truncate mr-2">{meeting.roomId}</span>
                                  <div className="flex gap-1 flex-shrink-0">
@@ -534,7 +591,6 @@ const Dashboard = () => {
                                     <button onClick={() => copyToClipboard(`${window.location.origin}/meeting/${meeting.roomId}`, true)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-blue-400 rounded-md transition-colors"><LinkIcon size={14}/></button>
                                  </div>
                               </div>
-
                               <div className="flex gap-2">
                                 <button onClick={() => navigate(`/meeting/${meeting.roomId}`)} className="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded-lg text-sm font-bold transition-colors">Start / Join</button>
                                 <button onClick={() => handleDeleteMeeting(meeting._id)} className="bg-slate-800 hover:bg-red-500/20 hover:text-red-400 border border-slate-700 p-2 rounded-lg transition-colors"><Trash2 size={18}/></button>
@@ -598,52 +654,67 @@ const Dashboard = () => {
                <div className="animate-in fade-in slide-in-from-bottom-4 w-full">
                   <div className="flex justify-between items-end mb-6 md:mb-8">
                      <div>
-                        <h2 className="text-2xl md:text-3xl font-bold text-blue-400">AI Task Board</h2>
-                        <p className="text-slate-400 text-sm mt-1">Smart Action Items extracted from your meetings</p>
+                        <h2 className="text-2xl md:text-3xl font-bold text-blue-400">AI Kanban Board</h2>
+                        <p className="text-slate-400 text-sm mt-1">Drag and drop action items extracted from your meetings</p>
                      </div>
                   </div>
-                  
                   {isLoadingMeetings ? <Loader2 className="animate-spin mx-auto text-blue-500" size={32} /> : (
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-start">
-                        {/* To Do Column */}
-                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]">
+                        
+                        <div 
+                          className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]"
+                          onDragOver={handleDragOver}
+                          onDrop={(e) => handleDrop(e, 'todo')}
+                        >
                            <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2 pb-3 border-b border-slate-800 text-sm uppercase tracking-wider">
                               <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> To Do ({todoTasks.length})
                            </h3>
                            <div className="space-y-3 overflow-y-auto pb-2 pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                               {todoTasks.length === 0 && <p className="text-sm text-slate-500 text-center mt-6 mb-6">No tasks pending</p>}
                               {todoTasks.map(t => (
-                                 <div key={t.id} className="bg-slate-950 p-4 rounded-xl border border-slate-800 hover:border-slate-700 transition relative group">
+                                 <div 
+                                   key={t.id} 
+                                   draggable 
+                                   onDragStart={(e) => handleDragStart(e, t.id, t.roomId)}
+                                   className="bg-slate-950 p-4 rounded-xl cursor-grab active:cursor-grabbing border border-slate-800 hover:border-slate-700 transition relative group"
+                                 >
                                     <button onClick={() => handleDeleteTask(t.roomId, t.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-400 p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                                        <Trash2 size={14} />
                                     </button>
                                     <p className="text-sm text-slate-300 mb-4 mt-1 leading-relaxed pr-6">{t.text}</p>
                                     <div className="flex justify-between items-center text-xs">
                                        <span className="text-slate-500 truncate max-w-[100px]">{t.roomTitle}</span>
-                                       <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, 'in-progress')} className="bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white px-3 py-1.5 rounded-lg transition font-medium border border-slate-700 hover:border-blue-500">Start Task</button>
+                                       <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, 'in-progress')} className="bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white px-3 py-1.5 rounded-lg transition font-medium border border-slate-700 hover:border-blue-500 md:hidden">Start</button>
                                     </div>
                                  </div>
                               ))}
                            </div>
                         </div>
 
-                        {/* In Progress Column */}
-                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]">
+                        <div 
+                          className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]"
+                          onDragOver={handleDragOver}
+                          onDrop={(e) => handleDrop(e, 'in-progress')}
+                        >
                            <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2 pb-3 border-b border-slate-800 text-sm uppercase tracking-wider">
                               <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span> In Progress ({inProgressTasks.length})
                            </h3>
                            <div className="space-y-3 overflow-y-auto pb-2 pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                               {inProgressTasks.length === 0 && <p className="text-sm text-slate-500 text-center mt-6 mb-6">Nothing in progress</p>}
                               {inProgressTasks.map(t => (
-                                 <div key={t.id} className="bg-slate-950 p-4 rounded-xl border border-yellow-500/20 hover:border-yellow-500/40 transition relative group">
+                                 <div 
+                                   key={t.id} 
+                                   draggable 
+                                   onDragStart={(e) => handleDragStart(e, t.id, t.roomId)}
+                                   className="bg-slate-950 p-4 rounded-xl cursor-grab active:cursor-grabbing border border-yellow-500/20 hover:border-yellow-500/40 transition relative group"
+                                 >
                                     <button onClick={() => handleDeleteTask(t.roomId, t.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-400 p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                                        <Trash2 size={14} />
                                     </button>
                                     <p className="text-sm text-slate-300 mb-4 mt-1 leading-relaxed pr-6">{t.text}</p>
                                     <div className="flex justify-between items-center text-xs">
                                        <span className="text-slate-500 truncate max-w-[80px]">{t.roomTitle}</span>
-                                       <div className="flex gap-1.5">
-                                          <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, 'todo')} className="bg-slate-800 text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg transition border border-slate-700">Back</button>
+                                       <div className="flex gap-1.5 md:hidden">
                                           <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, 'done')} className="bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg transition font-medium border border-emerald-500/30 hover:border-emerald-500">Done</button>
                                        </div>
                                     </div>
@@ -652,22 +723,29 @@ const Dashboard = () => {
                            </div>
                         </div>
 
-                        {/* Done Column */}
-                        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]">
+                        <div 
+                          className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]"
+                          onDragOver={handleDragOver}
+                          onDrop={(e) => handleDrop(e, 'done')}
+                        >
                            <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2 pb-3 border-b border-slate-800 text-sm uppercase tracking-wider">
                               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Done ({doneTasks.length})
                            </h3>
                            <div className="space-y-3 overflow-y-auto pb-2 pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                               {doneTasks.length === 0 && <p className="text-sm text-slate-500 text-center mt-6 mb-6">No completed tasks yet</p>}
                               {doneTasks.map(t => (
-                                 <div key={t.id} className="bg-slate-950 p-4 rounded-xl border border-emerald-500/10 opacity-75 hover:opacity-100 transition relative group">
+                                 <div 
+                                   key={t.id} 
+                                   draggable 
+                                   onDragStart={(e) => handleDragStart(e, t.id, t.roomId)}
+                                   className="bg-slate-950 p-4 rounded-xl cursor-grab active:cursor-grabbing border border-emerald-500/10 opacity-75 hover:opacity-100 transition relative group"
+                                 >
                                     <button onClick={() => handleDeleteTask(t.roomId, t.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-400 p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                                        <Trash2 size={14} />
                                     </button>
                                     <p className="text-sm text-slate-500 mb-4 mt-1 line-through decoration-slate-700 pr-6">{t.text}</p>
                                     <div className="flex justify-between items-center text-xs">
                                        <span className="text-slate-600 truncate max-w-[100px]">{t.roomTitle}</span>
-                                       <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, 'in-progress')} className="text-slate-500 hover:text-slate-300 px-2 py-1 transition font-medium">Re-open</button>
                                     </div>
                                  </div>
                               ))}
@@ -680,17 +758,18 @@ const Dashboard = () => {
 
             {activeTab === 'analytics' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 w-full min-w-0">
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-2 mb-6 md:mb-8">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6 md:mb-8">
                      <div>
                         <h2 className="text-2xl md:text-3xl font-bold text-slate-100">Insights & Analytics</h2>
                         <p className="text-slate-400 text-sm mt-1">Track your productivity and meeting stats</p>
                      </div>
+                     <button onClick={exportAnalyticsCSV} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 shadow-lg">
+                        <Download size={18} /> Export CSV
+                     </button>
                   </div>
 
                   {isLoadingMeetings ? <Loader2 className="animate-spin mx-auto text-blue-500" size={32} /> : (
                      <div className="space-y-4 md:space-y-6 min-w-0">
-                        
-                        {/* KPIs */}
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 max-w-6xl">
                            <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl flex flex-col justify-center items-center text-center shadow-sm">
                               <Calendar size={20} className="text-blue-400 mb-2 md:mb-3" />
@@ -716,10 +795,7 @@ const Dashboard = () => {
                            </div>
                         </div>
 
-                        {/* Top Charts */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 min-w-0 max-w-6xl">
-                           
-                           {/* Area Chart */}
                            <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl shadow-sm min-w-0">
                               <div className="flex items-center gap-2 mb-4 md:mb-6">
                                  <Activity size={18} className="text-blue-400" />
@@ -748,19 +824,14 @@ const Dashboard = () => {
                               )}
                            </div>
 
-                           {/* Pie Chart */}
                            <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl shadow-sm min-w-0">
                               <h3 className="text-base md:text-lg font-bold mb-2 md:mb-4 text-slate-200">Task Status</h3>
                               {pieChartData.length > 0 ? (
                                 <div className="h-[220px] md:h-[260px] w-full flex flex-col items-center justify-center min-w-0">
                                   <ResponsiveContainer width="100%" height="80%" minWidth={1} minHeight={1}>
                                     <PieChart>
-                                      <Pie
-                                        data={pieChartData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={5} dataKey="value" stroke="none"
-                                      >
-                                        {pieChartData.map((entry, index) => (
-                                          <Cell key={`cell-${index}`} fill={entry.color} />
-                                        ))}
+                                      <Pie data={pieChartData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={5} dataKey="value" stroke="none">
+                                        {pieChartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
                                       </Pie>
                                       <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px' }} itemStyle={{ color: '#fff' }}/>
                                     </PieChart>
@@ -780,7 +851,6 @@ const Dashboard = () => {
                            </div>
                         </div>
 
-                        {/* Table */}
                         <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-sm overflow-hidden min-w-0 max-w-6xl">
                            <div className="p-4 md:p-6 border-b border-slate-800">
                               <h3 className="text-base md:text-lg font-bold text-slate-200">Recent Performance Table</h3>
@@ -824,7 +894,6 @@ const Dashboard = () => {
                               </table>
                            </div>
                         </div>
-
                      </div>
                   )}
                </div>
@@ -836,7 +905,28 @@ const Dashboard = () => {
                   
                   <div className="space-y-4 md:space-y-6">
                      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 md:p-6 shadow-sm">
-                        <h3 className="text-base md:text-lg font-bold mb-4 flex items-center gap-2"><Edit2 size={18} className="text-blue-400"/> Personal Information</h3>
+                        <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2"><Edit2 size={18} className="text-blue-400"/> Personal Information</h3>
+                        
+                        <div className="flex flex-col items-center sm:flex-row sm:items-start gap-6 mb-8 pb-8 border-b border-slate-800">
+                           <div className="relative group">
+                              <div className="h-24 w-24 rounded-full bg-slate-800 border-4 border-slate-700 flex items-center justify-center overflow-hidden shadow-xl">
+                                 {user?.profilePic ? (
+                                    <img src={user.profilePic} alt="Profile" className="h-full w-full object-cover" />
+                                 ) : (
+                                    <span className="text-3xl font-bold text-slate-300 uppercase">{(user?.name || 'U').charAt(0)}</span>
+                                 )}
+                              </div>
+                              <label className="absolute bottom-0 right-0 bg-blue-600 hover:bg-blue-700 p-2 rounded-full cursor-pointer shadow-lg transition-transform hover:scale-110">
+                                 {isUploadingAvatar ? <Loader2 size={16} className="text-white animate-spin" /> : <Edit2 size={14} className="text-white" />}
+                                 <input type="file" accept="image/png, image/jpeg, image/webp" className="hidden" onChange={handleAvatarUpload} disabled={isUploadingAvatar} />
+                              </label>
+                           </div>
+                           <div className="text-center sm:text-left flex-1">
+                              <p className="text-sm font-bold text-white mb-1">Profile Avatar</p>
+                              <p className="text-xs text-slate-400 mb-3">Upload a square image, max size 2MB. JPG or PNG allowed.</p>
+                           </div>
+                        </div>
+
                         <div className="space-y-4">
                            <div>
                               <label className="block text-sm text-slate-400 mb-1">Display Name</label>

@@ -1,14 +1,13 @@
 import { useEffect, useState, useRef, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { io, Socket } from 'socket.io-client';
-import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2, Send } from 'lucide-react';
+import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2, Send, FileText, Plus, CheckSquare } from 'lucide-react';
 import { useAuthStore } from '../store/authStore'; 
 
 const peerConnectionConfig = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
 };
 
-// CSS for Floating Emojis (Kept outside to prevent re-renders)
 const FloatingEmojiStyles = () => (
   <style>{`
     @keyframes floatUp {
@@ -25,6 +24,7 @@ const FloatingEmojiStyles = () => (
 interface VideoPlayerProps {
   stream: MediaStream | null;
   name: string;
+  profilePic?: string;
   isMuted?: boolean;
   isVideoOff?: boolean;
   isLocal?: boolean;
@@ -33,7 +33,7 @@ interface VideoPlayerProps {
   isScreenShare?: boolean;
 }
 
-const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, isLocal = false, isSpeaking = false, isHandRaised = false, isScreenShare = false }: VideoPlayerProps) => {
+const VideoPlayer = memo(({ stream, name, profilePic, isMuted = false, isVideoOff = false, isLocal = false, isSpeaking = false, isHandRaised = false, isScreenShare = false }: VideoPlayerProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -52,8 +52,12 @@ const VideoPlayer = memo(({ stream, name, isMuted = false, isVideoOff = false, i
   return (
     <div className={`bg-slate-900 h-full w-full relative flex items-center justify-center rounded-2xl overflow-hidden group border-2 shadow-lg transition-all ${isSpeaking ? 'border-blue-500 shadow-blue-500/30' : 'border-slate-800'}`}>
       {isVideoOff ? (
-        <div className={`h-20 w-20 md:h-24 md:w-24 rounded-full flex items-center justify-center font-bold text-slate-300 text-3xl uppercase shadow-xl border-4 transition-all ${isSpeaking ? 'bg-slate-700 border-blue-500 shadow-blue-500/40' : 'bg-slate-800 border-slate-700'}`}>
-          {name ? name.charAt(0) : 'U'}
+        <div className={`h-20 w-20 md:h-24 md:w-24 rounded-full flex items-center justify-center font-bold text-slate-300 text-3xl uppercase shadow-xl border-4 overflow-hidden transition-all ${isSpeaking ? 'bg-slate-700 border-blue-500 shadow-blue-500/40' : 'bg-slate-800 border-slate-700'}`}>
+          {profilePic ? (
+             <img src={profilePic} alt={name} className="h-full w-full object-cover" />
+          ) : (
+             name ? name.charAt(0) : 'U'
+          )}
         </div>
       ) : (
         <video 
@@ -89,17 +93,22 @@ export default function MeetingRoom() {
   const [myRole, setMyRole] = useState<'creator' | 'co-host' | 'guest'>('guest');
   const [roomRoles, setRoomRoles] = useState<{[key: string]: 'creator' | 'co-host' | 'guest'}>({});
   const [joinRequests, setJoinRequests] = useState<any[]>([]);
-  const [globalPermissions, setGlobalPermissions] = useState({ mic: true, video: true, screen: true, record: false });
+  
+  const [globalPermissions, setGlobalPermissions] = useState({ mic: true, video: true, screen: true, record: false, notes: true, tasks: true });
   const [showSecurityModal, setShowSecurityModal] = useState(false);
   
   const [showSidebar, setShowSidebar] = useState(false); 
-  const [activeTab, setActiveTab] = useState<'chat' | 'participants'>('chat');
+  const [activeTab, setActiveTab] = useState<'chat' | 'participants' | 'notes'>('chat');
   const [messages, setMessages] = useState<{text: string, sender: string, time: string}[]>([]);
   const [chatInput, setChatInput] = useState('');
   
+  const [sharedNotes, setSharedNotes] = useState('');
+  const [selectedAssignee, setSelectedAssignee] = useState<string>('unassigned');
+  const [newTaskInput, setNewTaskInput] = useState('');
+  const [meetingTasks, setMeetingTasks] = useState<{id: string, text: string, status: string, creator: string, assigneeId?: string | null, assigneeName?: string}[]>([]);
+
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const typingTimeoutRef = useRef<any>(null);
-  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
   const [isMuted, setIsMuted] = useState(localStorage.getItem('intellmeet_isMuted') === 'true');
@@ -109,6 +118,7 @@ export default function MeetingRoom() {
   const peersRef = useRef<{ [key: string]: RTCPeerConnection }>({});
   const [remoteStreams, setRemoteStreams] = useState<{ [key: string]: MediaStream }>({});
   const [peerNames, setPeerNames] = useState<{ [key: string]: string }>({});
+  const [peerPics, setPeerPics] = useState<{ [key: string]: string }>({});
   const [peerStatus, setPeerStatus] = useState<{ [key: string]: { isMuted: boolean, isVideoOff: boolean } }>({});
   const [speakingPeers, setSpeakingPeers] = useState<{ [key: string]: boolean }>({});
   
@@ -151,6 +161,7 @@ export default function MeetingRoom() {
   };
   const userIdStore = getUserId();
   const [userName] = useState(() => user?.name || user?.firstName || `Guest-${Math.floor(Math.random() * 1000)}`);
+  const userProfilePic = user?.profilePic || ''; 
 
   const showNotification = (msg: string, sender: string = "System") => {
     setToastNotification({ msg, sender });
@@ -195,34 +206,43 @@ export default function MeetingRoom() {
       setupAudioMeter(stream); 
 
       if (!inLobby) {
-         newSocket.emit('join-request', { roomId, userId: userIdStore, userName });
+         newSocket.emit('join-request', { roomId, userId: userIdStore, userName, profilePic: userProfilePic });
       }
 
-      newSocket.on('user-connected', async ({ userId, userName: incomingName }) => {
+      newSocket.on('user-connected', async ({ userId, userName: incomingName, profilePic: incomingPic }: any) => {
         setPeerNames(prev => ({ ...prev, [userId]: incomingName }));
+        if (incomingPic) setPeerPics(prev => ({ ...prev, [userId]: incomingPic as string }));
         newSocket.emit('request-media-status', userId);
         
         const pc = createPeerConnection(userId, newSocket, stream!);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        newSocket.emit('offer', { target: userId, sdp: offer, userName }); 
+        newSocket.emit('offer', { target: userId, sdp: offer, userName, profilePic: userProfilePic }); 
       });
 
-      newSocket.on('offer', async (data: { caller: string, sdp: RTCSessionDescriptionInit, userName: string }) => {
+      newSocket.on('offer', async (data: any) => {
         setPeerNames(prev => ({ ...prev, [data.caller]: data.userName }));
+        if (data.profilePic) setPeerPics(prev => ({ ...prev, [data.caller]: data.profilePic as string }));
         newSocket.emit('request-media-status', data.caller);
         
         const pc = createPeerConnection(data.caller, newSocket, stream!);
         await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        newSocket.emit('answer', { target: data.caller, sdp: answer, userName }); 
+        newSocket.emit('answer', { target: data.caller, sdp: answer, userName, profilePic: userProfilePic }); 
       });
 
-      newSocket.on('answer', async (data: { caller: string, sdp: RTCSessionDescriptionInit, userName: string }) => {
+      newSocket.on('answer', async (data: any) => {
         setPeerNames(prev => ({ ...prev, [data.caller]: data.userName }));
+        if (data.profilePic) setPeerPics(prev => ({ ...prev, [data.caller]: data.profilePic as string }));
         const pc = peersRef.current[data.caller];
         if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+      });
+
+      newSocket.on('sync-initial-data', (data: any) => {
+        if (data.notes) setSharedNotes(data.notes);
+        if (data.tasks) setMeetingTasks(data.tasks);
+        if (data.chatHistory) setMessages(data.chatHistory);
       });
 
       newSocket.on('ice-candidate', async (data: { caller: string, candidate: RTCIceCandidateInit }) => {
@@ -233,6 +253,9 @@ export default function MeetingRoom() {
 
     setupMedia();
 
+    newSocket.on('receive-notes', (notes: string) => setSharedNotes(notes));
+    newSocket.on('receive-task', (task: any) => setMeetingTasks(prev => [...prev, task]));
+
     newSocket.on('join-approved', ({ role, permissions }) => {
         if (!isMounted) return;
         setIsWaiting(false); 
@@ -240,7 +263,7 @@ export default function MeetingRoom() {
         setGlobalPermissions(permissions);
         sessionStorage.setItem(`intellmeet_room_${roomId}`, 'true'); 
         
-        newSocket.emit('join-room', { roomId, userName });
+        newSocket.emit('join-room', { roomId, userName, profilePic: userProfilePic });
         setTimeout(() => {
           const currentMuted = localStorage.getItem('intellmeet_isMuted') === 'true';
           const currentVideoOff = localStorage.getItem('intellmeet_isVideoOff') === 'true';
@@ -293,6 +316,7 @@ export default function MeetingRoom() {
       }
       setRemoteStreams(prev => { const s = { ...prev }; delete s[peerId]; return s; });
       setPeerNames(prev => { const n = { ...prev }; delete n[peerId]; return n; });
+      setPeerPics(prev => { const p = { ...prev }; delete p[peerId]; return p; });
       setPeerStatus(prev => { const st = { ...prev }; delete st[peerId]; return st; });
       setSpeakingPeers(prev => { const sp = { ...prev }; delete sp[peerId]; return sp; });
       setRaisedHands(prev => { const rh = { ...prev }; delete rh[peerId]; return rh; });
@@ -344,12 +368,12 @@ export default function MeetingRoom() {
       Object.values(screenPeersRef.current).forEach(pc => pc.close());
       setLocalScreenStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
     };
-  }, [roomId, userName, navigate, userIdStore]); 
+  }, [roomId, userName, userProfilePic, navigate, userIdStore]); 
 
   const handleJoinClick = () => {
     setInLobby(false); 
     setIsWaiting(true);
-    socket?.emit('join-request', { roomId, userId: userIdStore, userName });
+    socket?.emit('join-request', { roomId, userId: userIdStore, userName, profilePic: userProfilePic });
   };
 
   const leaveMeeting = () => {
@@ -359,6 +383,38 @@ export default function MeetingRoom() {
     }
     sessionStorage.removeItem(`intellmeet_room_${roomId}`);
     navigate('/dashboard');
+  };
+
+  const handleNotesChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setSharedNotes(e.target.value);
+    socket?.emit('update-notes', { roomId, notes: e.target.value });
+  };
+
+  const handleAddTask = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTaskInput.trim()) return;
+
+    let assigneeIdValue = null;
+    let assigneeNameValue = 'Unassigned';
+
+    if (selectedAssignee !== 'unassigned') {
+        assigneeIdValue = selectedAssignee;
+        assigneeNameValue = peerNames[selectedAssignee] || userName; 
+    }
+
+    const newTask = { 
+        id: Date.now().toString(), 
+        text: newTaskInput, 
+        status: 'todo', 
+        creator: userName,
+        assigneeId: assigneeIdValue,
+        assigneeName: assigneeNameValue
+    };
+
+    setMeetingTasks(prev => [...prev, newTask]);
+    socket?.emit('add-task', { roomId, task: newTask });
+    setNewTaskInput('');
+    setSelectedAssignee('unassigned');
   };
 
   const triggerFloatingEmoji = (emoji: string) => {
@@ -522,7 +578,13 @@ export default function MeetingRoom() {
       await fetch(`${base_url}/api/meetings/end`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ transcript: fullTranscript, roomId: roomId })
+        body: JSON.stringify({ 
+            roomId: roomId,
+            transcript: fullTranscript, 
+            chatMessages: messages,
+            sharedNotes: sharedNotes,
+            manualTasks: meetingTasks 
+        }) 
       });
       socket?.emit('host-ended-meeting', { roomId });
       myStream?.getTracks().forEach(t => t.stop());
@@ -708,7 +770,7 @@ export default function MeetingRoom() {
     }
   };
 
-  const handleSecurityUpdate = (type: 'mic' | 'video' | 'screen' | 'record') => {
+  const handleSecurityUpdate = (type: 'mic' | 'video' | 'screen' | 'record' | 'notes' | 'tasks') => {
       const newPerms = { ...globalPermissions, [type]: !globalPermissions[type] };
       setGlobalPermissions(newPerms);
       socket?.emit('update-permissions', { roomId, permissions: newPerms });
@@ -785,7 +847,7 @@ export default function MeetingRoom() {
         <h2 className="text-3xl font-bold text-white mb-8">Ready to join?</h2>
         <div className="w-full max-w-3xl bg-slate-800 p-6 md:p-8 rounded-3xl border border-slate-700 shadow-2xl flex flex-col items-center">
           <div className="h-[300px] md:h-[400px] w-full rounded-2xl overflow-hidden mb-8 relative border-2 border-slate-700 bg-black">
-            <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} isMuted={true} isVideoOff={isVideoOff} isLocal={true} />
+            <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} profilePic={userProfilePic} isMuted={true} isVideoOff={isVideoOff} isLocal={true} />
           </div>
           <div className="flex flex-col md:flex-row items-center justify-between w-full gap-6">
              <div className="flex gap-4">
@@ -824,13 +886,9 @@ export default function MeetingRoom() {
       <FloatingEmojiStyles />
 
       {showSidebar && (
-        <div 
-           className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40" 
-           onClick={() => setShowSidebar(false)}
-        />
+        <div className="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-40" onClick={() => setShowSidebar(false)} />
       )}
 
-      {/* AI SUMMARY RESULT MODAL */}
       {aiSummaryResult && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
            <div className="bg-slate-900 border border-purple-500/30 p-6 rounded-2xl max-w-lg w-full shadow-2xl relative">
@@ -842,15 +900,11 @@ export default function MeetingRoom() {
                     const parts = line.split('**');
                     return (
                       <p key={`line-${i}`} className="mb-3">
-                        {parts.map((part, index) => 
-                          index % 2 === 1 ? <strong key={`bold-${i}-${index}`} className="text-white bg-slate-950 px-1 rounded">{part}</strong> : <span key={`text-${i}-${index}`}>{part}</span>
-                        )}
+                        {parts.map((part, index) => index % 2 === 1 ? <strong key={`bold-${i}-${index}`} className="text-white bg-slate-950 px-1 rounded">{part}</strong> : <span key={`text-${i}-${index}`}>{part}</span>)}
                       </p>
                     );
                   }
-                  if (line.trim().startsWith('-') || line.trim().startsWith('*')) {
-                     return <li key={`list-${i}`} className="ml-4 mb-2 text-blue-200">{line.replace(/^[-*]/, '').trim()}</li>
-                  }
+                  if (line.trim().startsWith('-') || line.trim().startsWith('*')) return <li key={`list-${i}`} className="ml-4 mb-2 text-blue-200">{line.replace(/^[-*]/, '').trim()}</li>
                   return <p key={`para-${i}`} className="mb-3">{line}</p>
                 })}
               </div>
@@ -859,7 +913,6 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      {/* SECURITY MODAL */}
       {showSecurityModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100]">
            <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full mx-4 shadow-2xl relative">
@@ -884,12 +937,19 @@ export default function MeetingRoom() {
                     <span className="font-medium text-sm">Record Meeting</span>
                     <input type="checkbox" checked={globalPermissions.record} onChange={() => handleSecurityUpdate('record')} className="w-4 h-4 text-blue-600 rounded" />
                  </label>
+                 <label className="flex items-center justify-between p-3 bg-slate-800 rounded-xl cursor-pointer hover:bg-slate-700 transition">
+                    <span className="font-medium text-sm">Edit Shared Notes</span>
+                    <input type="checkbox" checked={globalPermissions.notes} onChange={() => handleSecurityUpdate('notes')} className="w-4 h-4 text-blue-600 rounded" />
+                 </label>
+                 <label className="flex items-center justify-between p-3 bg-slate-800 rounded-xl cursor-pointer hover:bg-slate-700 transition">
+                    <span className="font-medium text-sm">Create Tasks</span>
+                    <input type="checkbox" checked={globalPermissions.tasks} onChange={() => handleSecurityUpdate('tasks')} className="w-4 h-4 text-blue-600 rounded" />
+                 </label>
               </div>
            </div>
         </div>
       )}
 
-      {/* SETTINGS MODAL */}
       {showSettingsModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100]">
            <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-md w-full mx-4 shadow-2xl relative">
@@ -924,7 +984,6 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      {/* EMOJI PICKER POPUP */}
       {showEmojiPicker && (
          <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-slate-800 border border-slate-700 rounded-full px-4 py-3 flex gap-3 md:gap-4 shadow-[0_0_30px_rgba(0,0,0,0.5)] z-[200] animate-in fade-in slide-in-from-bottom-2">
             {['👍', '👏', '❤️', '😂', '😲', '🎉'].map(emoji => (
@@ -933,7 +992,6 @@ export default function MeetingRoom() {
          </div>
       )}
 
-      {/* MAIN VIDEO AREA */}
       <div className={`flex-1 flex flex-col p-2 md:p-4 relative transition-all duration-300 ${showSidebar ? 'md:mr-[350px]' : 'w-full'} h-full`}>
         
         {toastNotification && (
@@ -954,8 +1012,6 @@ export default function MeetingRoom() {
           </h2>
 
           <div className="flex gap-2 items-center relative">
-            
-            {/* MOBILE HEADER */}
             <div className="md:hidden flex items-center gap-1.5 sm:gap-2">
                {myRole === 'creator' && (
                  <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-600 hover:bg-red-700 px-2.5 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold text-white shadow-lg transition flex items-center gap-1">
@@ -975,19 +1031,16 @@ export default function MeetingRoom() {
                </button>
             </div>
 
-            {/* DESKTOP VIEW */}
             <div className="hidden md:flex items-center gap-2">
               <button onClick={generateAISummary} disabled={isGeneratingAI} className="bg-purple-600/20 text-purple-400 border border-purple-500/50 hover:bg-purple-600 hover:text-white px-4 py-2 rounded-lg font-bold transition flex items-center gap-2">
                 {isGeneratingAI ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
                 <span>AI Summary</span>
               </button>
-
               {myRole === 'creator' && (
                 <button onClick={handleEndMeeting} disabled={isGeneratingAI} className="bg-red-700 px-4 py-2 rounded-lg font-bold hover:bg-red-800 text-white shadow-lg transition">
                   End Meeting
                 </button>
               )}
-
               {(myRole === 'creator' || myRole === 'co-host') && (
                 <button onClick={() => setShowSecurityModal(true)} className="bg-slate-800 p-2 rounded-lg text-blue-400 hover:bg-slate-700 transition">
                   <Shield size={18} />
@@ -1000,16 +1053,13 @@ export default function MeetingRoom() {
                 Leave Call
               </button>
             </div>
-
           </div>
         </div>
         
-        {/* GRID VIEW FOR VIDEOS */}
         <div className={`flex-1 flex overflow-hidden pb-[80px] md:pb-24 px-1 md:px-2 gap-2 md:gap-4 min-h-0 ${displayPinnedId ? 'flex-col md:flex-row' : 'flex-col'}`}>
-          
           {displayPinnedId === 'local' ? (
             <div className="w-full md:flex-1 h-[60%] md:h-full rounded-2xl shadow-2xl relative cursor-pointer flex-shrink-0 transition-all overflow-hidden" onClick={() => setPinnedUserId(null)}>
-              <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} isMuted={true} isVideoOff={isVideoOff} isLocal={true} isSpeaking={speakingPeers['local']} isHandRaised={isHandRaised} />
+              <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} profilePic={userProfilePic} isMuted={true} isVideoOff={isVideoOff} isLocal={true} isSpeaking={speakingPeers['local']} isHandRaised={isHandRaised} />
               <div className="absolute top-3 right-3 bg-black/70 backdrop-blur px-2 py-1 rounded text-xs border border-white/20 z-20">Click to unpin</div>
             </div>
           ) : displayPinnedId === 'local-screen' && localScreenStream ? (
@@ -1019,13 +1069,12 @@ export default function MeetingRoom() {
             </div>
           ) : (displayPinnedId && peerNames[displayPinnedId]) ? (
             <div className="w-full md:flex-1 h-[60%] md:h-full rounded-2xl shadow-2xl relative cursor-pointer flex-shrink-0 transition-all overflow-hidden" onClick={() => setPinnedUserId(null)}>
-              <VideoPlayer stream={remoteStreams[displayPinnedId] || new MediaStream()} name={peerNames[displayPinnedId] || "Participant"} isMuted={peerStatus[displayPinnedId]?.isMuted} isVideoOff={peerStatus[displayPinnedId]?.isVideoOff} isSpeaking={speakingPeers[displayPinnedId]} isHandRaised={raisedHands[displayPinnedId]} />
+              <VideoPlayer stream={remoteStreams[displayPinnedId] || new MediaStream()} name={peerNames[displayPinnedId] || "Participant"} profilePic={peerPics[displayPinnedId]} isMuted={peerStatus[displayPinnedId]?.isMuted} isVideoOff={peerStatus[displayPinnedId]?.isVideoOff} isSpeaking={speakingPeers[displayPinnedId]} isHandRaised={raisedHands[displayPinnedId]} />
               <div className="absolute top-3 right-3 bg-black/70 backdrop-blur px-2 py-1 rounded text-xs border border-white/20 z-20">{pinnedUserId ? "Click to unpin" : "Main Stage"}</div>
             </div>
           ) : null}
 
           <div className={`grid gap-2 md:gap-4 min-h-0 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${displayPinnedId ? 'grid-cols-3 md:grid-cols-1 w-full md:w-64 h-[25%] md:h-full flex-shrink-0 overflow-y-auto content-start auto-rows-[100px] md:auto-rows-[140px]' : `${getGridClasses(totalTiles)} w-full h-full flex-1`}`}>
-            
             {activePeers.map(id => {
               if (id === displayPinnedId) return null;
               if (id === 'local-screen') {
@@ -1037,7 +1086,7 @@ export default function MeetingRoom() {
               }
               return (
                 <div key={id} onClick={() => setPinnedUserId(id)} className="cursor-pointer transition-transform hover:scale-[1.02] w-full h-full relative min-h-0 min-w-0">
-                  <VideoPlayer stream={remoteStreams[id] || new MediaStream()} name={peerNames[id] || "Participant"} isMuted={peerStatus[id]?.isMuted} isVideoOff={false} isSpeaking={speakingPeers[id]} isHandRaised={raisedHands[id]} />
+                  <VideoPlayer stream={remoteStreams[id] || new MediaStream()} name={peerNames[id] || "Participant"} profilePic={peerPics[id]} isMuted={peerStatus[id]?.isMuted} isVideoOff={false} isSpeaking={speakingPeers[id]} isHandRaised={raisedHands[id]} />
                 </div>
               );
             })}
@@ -1046,7 +1095,7 @@ export default function MeetingRoom() {
               if (id === displayPinnedId) return null;
               return (
                 <div key={id} onClick={() => setPinnedUserId(id)} className="cursor-pointer transition-transform hover:scale-[1.02] w-full h-full relative min-h-0 min-w-0">
-                  <VideoPlayer stream={remoteStreams[id] || new MediaStream()} name={peerNames[id] || "Participant"} isMuted={peerStatus[id]?.isMuted} isVideoOff={true} isSpeaking={speakingPeers[id]} isHandRaised={raisedHands[id]} />
+                  <VideoPlayer stream={remoteStreams[id] || new MediaStream()} name={peerNames[id] || "Participant"} profilePic={peerPics[id]} isMuted={peerStatus[id]?.isMuted} isVideoOff={true} isSpeaking={speakingPeers[id]} isHandRaised={raisedHands[id]} />
                 </div>
               );
             })}
@@ -1074,21 +1123,18 @@ export default function MeetingRoom() {
           </div>
         </div>
 
-        {/* Small overlay video on desktop when someone else is pinned */}
         {displayPinnedId !== 'local' && (
           <div className="absolute bottom-[calc(6rem+env(safe-area-inset-bottom))] right-4 md:bottom-28 md:right-8 w-24 h-36 md:w-48 md:h-32 bg-slate-950 rounded-xl border-2 border-slate-700 overflow-hidden shadow-2xl z-20 transition-all">
-             <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} isMuted={isMuted} isVideoOff={isVideoOff} isLocal={true} isSpeaking={speakingPeers['local']} isHandRaised={isHandRaised} />
+             <VideoPlayer stream={myStream || new MediaStream()} name={`${userName} (You)`} profilePic={userProfilePic} isMuted={isMuted} isVideoOff={isVideoOff} isLocal={true} isSpeaking={speakingPeers['local']} isHandRaised={isHandRaised} />
           </div>
         )}
 
-        {/* Captions */}
         {liveCaption && captionsEnabled && (
           <div className="absolute bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-36 left-1/2 -translate-x-1/2 bg-black/80 px-4 py-2 md:px-6 md:py-3 rounded-2xl text-center backdrop-blur-md z-20 border border-white/10 shadow-2xl max-w-[90%] md:max-w-[70%] pointer-events-none">
             <p className="text-white text-xs md:text-base font-medium leading-relaxed">{liveCaption}</p>
           </div>
         )}
 
-        {/* BOTTOM CONTROLS ISLAND */}
         <div className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] md:bottom-8 left-1/2 -translate-x-1/2 bg-slate-800/95 backdrop-blur-lg px-2 py-2 md:px-6 md:py-3 rounded-full flex gap-2 md:gap-4 z-40 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-slate-700 w-max max-w-[95vw] overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] items-center">
           
           <button onClick={toggleMute} className={`p-3 md:p-4 rounded-full transition-all duration-200 shrink-0 ${isMuted ? 'bg-red-500 hover:bg-red-600 shadow-[0_0_15px_rgba(239,68,68,0.4)]' : (myRole === 'guest' && !globalPermissions.mic ? 'bg-slate-700 opacity-50 cursor-not-allowed' : 'bg-slate-700 hover:bg-slate-600')}`}>
@@ -1136,19 +1182,22 @@ export default function MeetingRoom() {
             <Users size={20} />
             {joinRequests.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] h-5 w-5 flex items-center justify-center rounded-full border-2 border-slate-900">{joinRequests.length}</span>}
           </button>
+
+          <button onClick={() => { setShowSidebar(!showSidebar); setActiveTab('notes'); }} className={`p-3 md:p-4 rounded-full transition-all hidden md:block shrink-0 relative ${showSidebar && activeTab === 'notes' ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-slate-700 hover:bg-slate-600'}`}>
+            <FileText size={20} />
+          </button>
         </div>
       </div>
 
-      {/* CHAT & SIDEBAR COMPONENT */}
       <div className={`${showSidebar ? 'translate-x-0' : 'translate-x-full'} fixed top-0 right-0 h-[100dvh] w-full md:w-[350px] bg-slate-900 border-l border-slate-800 shadow-[0_0_50px_rgba(0,0,0,0.5)] z-[60] flex flex-col transition-transform duration-300 ease-in-out`}>
-        
         <div className="flex items-center justify-between p-3 border-b border-slate-800 bg-slate-950">
-          <div className="flex gap-2 w-full bg-slate-800/50 p-1 rounded-xl">
-             <button onClick={() => setActiveTab('chat')} className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-colors ${activeTab === 'chat' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Chat</button>
-             <button onClick={() => setActiveTab('participants')} className={`flex-1 py-1.5 text-sm font-bold rounded-lg transition-colors relative ${activeTab === 'participants' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
+          <div className="flex gap-1 w-full bg-slate-800/50 p-1 rounded-xl">
+             <button onClick={() => setActiveTab('chat')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-lg transition-colors ${activeTab === 'chat' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Chat</button>
+             <button onClick={() => setActiveTab('participants')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-lg transition-colors relative ${activeTab === 'participants' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
                 People ({Object.keys(peerNames).length + 1})
                 {joinRequests.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] h-4 w-4 flex items-center justify-center rounded-full">{joinRequests.length}</span>}
              </button>
+             <button onClick={() => setActiveTab('notes')} className={`flex-1 py-1.5 text-[11px] sm:text-xs font-bold rounded-lg transition-colors ${activeTab === 'notes' ? 'bg-slate-700 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Notes</button>
           </div>
           <button onClick={() => setShowSidebar(false)} className="ml-3 text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 p-2 rounded-xl transition-colors">
             <X size={18} />
@@ -1209,6 +1258,80 @@ export default function MeetingRoom() {
           </div>
         )}
 
+        {activeTab === 'notes' && (
+          <div className="flex-1 flex flex-col bg-slate-900/50 p-3 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            
+            <div className="flex flex-col h-1/2 mb-4">
+               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2"><FileText size={14}/> Live Shared Notes</h4>
+               <textarea 
+                  value={sharedNotes}
+                  onChange={handleNotesChange}
+                  disabled={myRole === 'guest' && !globalPermissions.notes}
+                  placeholder={myRole === 'guest' && !globalPermissions.notes ? "Host disabled typing in shared notes." : "Type here... Everyone in the meeting can see and edit this document in real-time."}
+                  className="flex-1 w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm text-slate-200 outline-none focus:border-blue-500 resize-none transition-colors shadow-inner disabled:opacity-50 disabled:cursor-not-allowed"
+               />
+               <p className="text-[10px] text-slate-500 mt-1 italic">Edits are synced instantly with all participants.</p>
+            </div>
+
+            <div className="w-full h-px bg-slate-800 my-2"></div>
+
+            <div className="flex flex-col flex-1 min-h-[200px]">
+               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-2"><CheckSquare size={14}/> Action Items</h4>
+               
+               <form onSubmit={handleAddTask} className="flex flex-col gap-2 mb-3">
+                  <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={newTaskInput} 
+                        onChange={(e) => setNewTaskInput(e.target.value)} 
+                        disabled={myRole === 'guest' && !globalPermissions.tasks}
+                        placeholder={myRole === 'guest' && !globalPermissions.tasks ? "Task creation disabled by host." : "Add a new task..."} 
+                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed" 
+                      />
+                      <button type="submit" disabled={!newTaskInput.trim() || (myRole === 'guest' && !globalPermissions.tasks)} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-3 py-2 rounded-lg transition-colors flex items-center justify-center">
+                        <Plus size={16} />
+                      </button>
+                  </div>
+                  <select 
+                      value={selectedAssignee} 
+                      onChange={(e) => setSelectedAssignee(e.target.value)}
+                      disabled={myRole === 'guest' && !globalPermissions.tasks}
+                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300 outline-none focus:border-blue-500 disabled:opacity-50"
+                  >
+                      <option value="unassigned">Assign to (Optional)</option>
+                      <option value="local">{userName} (You)</option>
+                      {Object.keys(peerNames).map(id => (
+                          <option key={id} value={id}>{peerNames[id]}</option>
+                      ))}
+                  </select>
+               </form>
+
+               <div className="flex-1 overflow-y-auto space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                  {meetingTasks.length === 0 ? (
+                     <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-50">
+                        <CheckSquare size={32} className="mb-2" />
+                        <span className="text-xs">No tasks added yet</span>
+                     </div>
+                  ) : (
+                     meetingTasks.map((task) => (
+                        <div key={task.id} className="bg-slate-800/50 border border-slate-700/50 p-2.5 rounded-lg flex flex-col">
+                           <div className="flex justify-between items-start">
+                               <span className="text-sm text-slate-200">{task.text}</span>
+                               {task.assigneeName && task.assigneeName !== 'Unassigned' && (
+                                   <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded border border-blue-500/30 whitespace-nowrap ml-2">
+                                       @ {task.assigneeName}
+                                   </span>
+                               )}
+                           </div>
+                           <span className="text-[9px] text-slate-400 mt-1">Added by {task.creator}</span>
+                        </div>
+                     ))
+                  )}
+               </div>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'participants' && (
           <div className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] p-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
              
@@ -1233,8 +1356,12 @@ export default function MeetingRoom() {
              
              <div className="flex items-center justify-between p-3 bg-slate-800/30 rounded-xl mb-2 border border-slate-800">
                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                   <div className="flex-shrink-0 h-10 w-10 rounded-full bg-blue-600 flex items-center justify-center font-bold text-lg relative">
-                     {userName.charAt(0)}
+                   <div className="flex-shrink-0 h-10 w-10 rounded-full bg-slate-700 border-2 border-blue-500 flex items-center justify-center font-bold text-lg relative overflow-hidden">
+                     {userProfilePic ? (
+                        <img src={userProfilePic} alt="P" className="h-full w-full object-cover" />
+                     ) : (
+                        userName.charAt(0)
+                     )}
                      {speakingPeers['local'] && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>}
                    </div>
                    <div className="flex flex-col min-w-0">
@@ -1262,8 +1389,12 @@ export default function MeetingRoom() {
                 return (
                   <div key={id} className={`flex items-center justify-between p-3 rounded-xl transition-colors border ${speakingPeers[id] ? 'bg-blue-900/20 border-blue-800/50' : 'border-transparent hover:bg-slate-800/50 hover:border-slate-700'}`}>
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                       <div className="flex-shrink-0 h-10 w-10 rounded-full bg-slate-700 flex items-center justify-center font-bold text-lg text-slate-300 relative">
-                          {(peerNames[id] || 'P').charAt(0)}
+                       <div className="flex-shrink-0 h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center font-bold text-lg text-slate-300 relative overflow-hidden">
+                          {peerPics[id] ? (
+                             <img src={peerPics[id]} alt="P" className="h-full w-full object-cover" />
+                          ) : (
+                             (peerNames[id] || 'P').charAt(0)
+                          )}
                           {speakingPeers[id] && <span className="absolute -top-1 -right-1 flex h-3 w-3"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span><span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span></span>}
                        </div>
                        <div className="flex flex-col min-w-0">
@@ -1298,7 +1429,6 @@ export default function MeetingRoom() {
         )}
       </div>
 
-      {/* FLOATING EMOJIS */}
       <div className="fixed inset-0 pointer-events-none z-[1000] overflow-hidden">
         {floatingEmojis.map(emoji => (
            <div 

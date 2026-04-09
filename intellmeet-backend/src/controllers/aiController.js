@@ -29,15 +29,28 @@ exports.generateSummary = async (req, res) => {
 
 exports.endMeetingAndSummarize = async (req, res) => {
     try {
-        const { transcript, roomId } = req.body;
+        const { transcript, roomId, chatMessages, sharedNotes, manualTasks } = req.body;
         const apiKey = process.env.GROQ_API_KEY;
 
-        let finalSummary = "Meeting was concluded successfully. No voice conversation or speech was transcribed during this session.";
+        let finalSummary = "Meeting was concluded successfully. No significant data was captured.";
         let extractedTasks = [];
 
-        if (transcript && transcript.trim().length >= 10 && apiKey) {
+        let chatString = "";
+        if (chatMessages && chatMessages.length > 0) {
+            chatString = chatMessages.map(m => `${m.sender}: ${m.text}`).join('\n');
+        }
+
+        if ((transcript || chatString || sharedNotes) && apiKey) {
             
-            const prompt = `You are a professional Executive Assistant. Analyze this entire video meeting transcript and provide:\n1. **Final Meeting Summary**\n2. **Action Items** (List each specific task strictly as a bullet point starting with '-' or '*')\n\nTranscript:\n"""\n${transcript}\n"""`;
+            const prompt = `You are a professional Executive Assistant. Analyze all provided meeting data and provide:
+            1. **Final Meeting Summary** (Combine insights from audio, chat, and shared notes)
+            2. **Action Items** (List each specific task strictly as a bullet point starting with '-' or '*')
+
+            --- DATA ---
+            TRANSCRIPT: ${transcript || "None"}
+            CHAT: ${chatString || "None"}
+            NOTES: ${sharedNotes || "None"}
+            ------------`;
 
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                 method: "POST",
@@ -71,7 +84,8 @@ exports.endMeetingAndSummarize = async (req, res) => {
                                 extractedTasks.push({
                                     id: `task-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
                                     text: cleanText,
-                                    status: 'todo'
+                                    status: 'todo',
+                                    creator: 'AI Assistant'
                                 });
                             }
                         }
@@ -80,10 +94,18 @@ exports.endMeetingAndSummarize = async (req, res) => {
             }
         }
 
+        // FIX: Manual tasks ka status forcefully change nahi hoga
+        const finalTasksList = [...extractedTasks, ...(manualTasks || []).map(t => ({...t, status: t.status || 'todo'}))];
+
         if (roomId) {
             await Meeting.findOneAndUpdate(
                 { roomId: roomId },
-                { summary: finalSummary, status: 'Completed', tasks: extractedTasks },
+                { 
+                    summary: finalSummary, 
+                    sharedNotes: sharedNotes || "",
+                    status: 'Completed', 
+                    tasks: finalTasksList 
+                },
                 { new: true }
             );
         }

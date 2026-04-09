@@ -3,12 +3,19 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt'); 
 const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
+const cloudinary = require('cloudinary').v2;
 
 const generateTokens = (id) => {
     const accessToken = jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '15m' });
     const refreshToken = jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
     return { accessToken, refreshToken };
 };
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
 exports.registerUser = async (req, res) => {
     const { name, email, password } = req.body;
@@ -18,11 +25,9 @@ exports.registerUser = async (req, res) => {
 
         const user = await User.create({ name, email, password });
         
-        // Generate Token & Save
         const verifyToken = user.getVerificationToken();
         await user.save({ validateBeforeSave: false });
 
-        // Send Beautiful Verification Email
         const verifyUrl = `${process.env.CLIENT_URL}/verify-email/${verifyToken}`;
         const message = `
             <div style="font-family: Arial, sans-serif; max-w: 500px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
@@ -68,7 +73,6 @@ exports.loginUser = async (req, res) => {
         const user = await User.findOne({ email });
         if (user && (await bcrypt.compare(password, user.password))) {
             
-            // Check if user is explicitly not verified (backward compatible for old users)
             if (user.isVerified === false) {
                 return res.status(401).json({ message: 'Please verify your email first. Check your inbox.' });
             }
@@ -78,7 +82,8 @@ exports.loginUser = async (req, res) => {
                 token: tokens.accessToken,
                 accessToken: tokens.accessToken,
                 refreshToken: tokens.refreshToken,
-                user: { _id: user._id, name: user.name, email: user.email }
+                // NAYA: profilePic add kiya taaki login ke baad turant photo dikhe
+                user: { _id: user._id, name: user.name, email: user.email, profilePic: user.profilePic } 
             });
         } else { res.status(401).json({ message: 'Invalid email or password' }); }
     } catch (error) { res.status(500).json({ message: error.message }); }
@@ -90,7 +95,8 @@ exports.updateProfile = async (req, res) => {
         if (user) {
             user.name = req.body.name || user.name;
             const updatedUser = await user.save();
-            res.json({ _id: updatedUser._id, name: updatedUser.name, email: updatedUser.email });
+            // NAYA: profilePic add kiya
+            res.json({ _id: updatedUser._id, name: updatedUser.name, email: updatedUser.email, profilePic: updatedUser.profilePic });
         } else { res.status(404).json({ message: 'User not found' }); }
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
@@ -161,4 +167,34 @@ exports.resetPassword = async (req, res) => {
 
         res.status(200).json({ message: 'Password has been reset successfully. You can now login.' });
     } catch (error) { res.status(500).json({ message: error.message }); }
+};
+
+exports.updateAvatar = async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No image file provided' });
+        }
+
+        const b64 = Buffer.from(req.file.buffer).toString("base64");
+        let dataURI = "data:" + req.file.mimetype + ";base64," + b64;
+
+        const result = await cloudinary.uploader.upload(dataURI, {
+            folder: 'intellmeet_avatars',
+            width: 250,
+            height: 250,
+            crop: "fill", 
+            gravity: "face" 
+        });
+
+        const updatedUser = await User.findByIdAndUpdate(
+            req.user._id,
+            { profilePic: result.secure_url },
+            { returnDocument: 'after' } // NAYA: Mongoose Warning Fix
+        ).select('-password');
+
+        res.status(200).json(updatedUser);
+    } catch (error) {
+        console.error("CLOUDINARY ERROR:", error);
+        res.status(500).json({ message: 'Image upload failed', error: error.message });
+    }
 };

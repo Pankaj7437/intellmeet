@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Sparkles, CheckCircle, Calendar, ArrowLeft, Loader2, BarChart3, Users } from 'lucide-react';
+import { Sparkles, CheckCircle, Calendar, ArrowLeft, Loader2, BarChart3, Users, Download } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { useAuthStore } from '../store/authStore'; 
 
@@ -36,6 +36,20 @@ export default function MeetingSummary() {
     fetchMeetingData();
   }, [roomId]);
 
+  const downloadNotes = () => {
+    if (!meeting?.sharedNotes) {
+      alert("No shared notes available for this meeting.");
+      return;
+    }
+    const element = document.createElement("a");
+    const file = new Blob([meeting.sharedNotes], {type: 'text/plain'});
+    element.href = URL.createObjectURL(file);
+    element.download = `${meeting.title || 'Meeting'}_Shared_Notes.txt`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-white">
@@ -55,8 +69,7 @@ export default function MeetingSummary() {
   }
 
   const summaryText = meeting.summary || "No AI summary was generated for this meeting. Either the meeting was too short or recording was disabled.";
-  
-  // Real Tasks from DB
+
   const tasks = meeting.tasks || [];
   const todoCount = tasks.filter((t: any) => t.status === 'todo').length;
   const inProgressCount = tasks.filter((t: any) => t.status === 'in-progress').length;
@@ -67,8 +80,7 @@ export default function MeetingSummary() {
     { name: 'In Progress', value: inProgressCount, color: '#eab308' },
     { name: 'Done', value: doneCount, color: '#10b981' },
   ].filter(item => item.value > 0);
-
-  // Real Participants Logic
+ 
   const host = meeting.host;
   const participants = meeting.participants || [];
   const allUsers: any[] = [];
@@ -86,13 +98,16 @@ export default function MeetingSummary() {
     <div className="min-h-screen bg-slate-950 text-slate-200 p-4 md:p-6 lg:p-10 font-sans overflow-y-auto">
       <div className="max-w-6xl mx-auto">
         
-        <div className="mb-6">
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
            <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 text-slate-400 hover:text-white transition bg-slate-900 px-4 py-2 rounded-lg shadow-md border border-slate-800 text-sm font-medium w-max">
              <ArrowLeft size={16} /> Back to Dashboard
            </button>
+           
+           <button onClick={downloadNotes} className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg shadow-md transition text-sm font-bold w-full sm:w-auto">
+             <Download size={16} /> Download Notes (.txt)
+           </button>
         </div>
 
-        {/* HEADER SECTION */}
         <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden mb-6">
           <div className="absolute top-0 right-0 w-64 h-64 bg-purple-600/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
 
@@ -125,10 +140,8 @@ export default function MeetingSummary() {
           </div>
         </div>
 
-        {/* MAIN CONTENT GRID */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
           
-          {/* LEFT COLUMN: AI Insights */}
           <div className="lg:col-span-2">
              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 md:p-8 shadow-xl relative overflow-hidden h-full">
                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-blue-500"></div>
@@ -156,10 +169,8 @@ export default function MeetingSummary() {
              </div>
           </div>
 
-          {/* RIGHT COLUMN: Tasks & Participants */}
           <div className="space-y-6">
              
-             {/* Tasks Donut */}
              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
                 <h2 className="text-lg font-bold flex items-center gap-2 text-white mb-6">
                    <BarChart3 size={18} className="text-emerald-400"/> Task Resolution
@@ -190,7 +201,6 @@ export default function MeetingSummary() {
                 )}
              </div>
 
-             {/* Detailed Participants List */}
              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl">
                 <div className="flex justify-between items-center mb-6">
                    <h2 className="text-lg font-bold flex items-center gap-2 text-white">
@@ -205,8 +215,12 @@ export default function MeetingSummary() {
                       
                       return (
                       <div key={idx} className="bg-slate-950 border border-slate-800/80 p-3 rounded-xl flex items-center gap-3">
-                         <div className="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-white uppercase shrink-0 border border-slate-700">
-                            {u.name?.charAt(0) || 'U'}
+                         <div className="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-bold text-white uppercase shrink-0 border border-slate-700 overflow-hidden">
+                            {u.profilePic ? (
+                               <img src={u.profilePic} alt={u.name} className="h-full w-full object-cover" />
+                            ) : (
+                               u.name?.charAt(0) || 'U'
+                            )}
                          </div>
                          <div className="overflow-hidden flex-1">
                             <p className="text-slate-200 font-bold text-sm flex items-center gap-2 truncate">

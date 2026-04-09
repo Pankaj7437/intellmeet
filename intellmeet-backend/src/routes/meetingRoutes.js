@@ -8,9 +8,7 @@ router.post('/schedule', protect, scheduleMeeting);
 router.get('/', protect, getMeetings);
 router.get('/room/:roomId', protect, getMeetingByRoomId); 
 router.delete('/:id', protect, deleteMeeting);
-
 router.put('/room/:roomId/tasks/:taskId', protect, updateTaskStatus); 
-
 router.delete('/room/:roomId/tasks/:taskId', protect, deleteTask);
 
 router.post('/summary', protect, aiController.generateSummary); 
