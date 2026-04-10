@@ -6,7 +6,7 @@ const sendEmail = require('../utils/sendEmail');
 const cloudinary = require('cloudinary').v2;
 
 const generateTokens = (id) => {
-    const accessToken = jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '15m' });
+    const accessToken = jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' }); 
     const refreshToken = jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
     return { accessToken, refreshToken };
 };
@@ -189,7 +189,7 @@ exports.updateAvatar = async (req, res) => {
         const updatedUser = await User.findByIdAndUpdate(
             req.user._id,
             { profilePic: result.secure_url },
-            { returnDocument: 'after' } // NAYA: Mongoose Warning Fix
+            { returnDocument: 'after' } 
         ).select('-password');
 
         res.status(200).json(updatedUser);

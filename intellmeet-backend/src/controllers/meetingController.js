@@ -115,3 +115,20 @@ exports.deleteTask = async (req, res) => {
         res.status(200).json(meeting);
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
+
+exports.getIceServers = async (req, res) => {
+    try {
+        
+        const iceServers = [
+            { urls: 'stun:stun.l.google.com:19302' }, 
+            {
+                urls: process.env.TURN_URL,
+                username: process.env.TURN_USERNAME,
+                credential: process.env.TURN_PASSWORD
+            }
+        ];
+        res.status(200).json(iceServers);
+    } catch (error) { 
+        res.status(500).json({ message: "Failed to fetch network config" }); 
+    }
+};

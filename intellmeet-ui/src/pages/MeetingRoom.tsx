@@ -4,10 +4,6 @@ import { io, Socket } from 'socket.io-client';
 import { Mic, MicOff, Video as VideoIcon, VideoOff, MonitorUp, MessageSquare, X, Users, Pin, Hand, Smile, Settings, Shield, Star, UserMinus, Check, Circle, StopCircle, Sparkles, Loader2, Send, FileText, Plus, CheckSquare } from 'lucide-react';
 import { useAuthStore } from '../store/authStore'; 
 
-const peerConnectionConfig = {
-  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-};
-
 const FloatingEmojiStyles = () => (
   <style>{`
     @keyframes floatUp {
@@ -88,6 +84,9 @@ export default function MeetingRoom() {
   const navigate = useNavigate();
   const [socket, setSocket] = useState<Socket | null>(null);
 
+  const iceConfigRef = useRef<any>({ 
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] 
+  });
   const [inLobby, setInLobby] = useState(!sessionStorage.getItem(`intellmeet_room_${roomId}`));
   const [isWaiting, setIsWaiting] = useState(false); 
   const [myRole, setMyRole] = useState<'creator' | 'co-host' | 'guest'>('guest');
@@ -167,6 +166,28 @@ export default function MeetingRoom() {
     setToastNotification({ msg, sender });
     setTimeout(() => setToastNotification(null), 4000);
   };
+
+  useEffect(() => {
+    const fetchIceServers = async () => {
+      try {
+        const raw_url = (import.meta as any).env.VITE_API_URL || 'http://localhost:5000';
+        const API_URL = raw_url.replace(/\/api\/?$/, '');
+        const token = localStorage.getItem('token');
+        
+        const res = await fetch(`${API_URL}/api/meetings/ice-servers`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          iceConfigRef.current = { iceServers: data };
+        }
+      } catch (error) {
+        console.error("Failed to fetch secure TURN credentials", error);
+      }
+    };
+    fetchIceServers();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -368,7 +389,8 @@ export default function MeetingRoom() {
       Object.values(screenPeersRef.current).forEach(pc => pc.close());
       setLocalScreenStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
     };
-  }, [roomId, userName, userProfilePic, navigate, userIdStore]); 
+  // NAYA: Dependecy array me iceConfig add kiya
+  }, [roomId, userName, userProfilePic, navigate, userIdStore ]); 
 
   const handleJoinClick = () => {
     setInLobby(false); 
@@ -600,7 +622,8 @@ export default function MeetingRoom() {
   };
 
   const createPeerConnection = (peerId: string, currentSocket: Socket, stream: MediaStream) => {
-    const pc = new RTCPeerConnection(peerConnectionConfig);
+    // NAYA: Updated to use dynamic iceConfig state
+    const pc = new RTCPeerConnection(iceConfigRef.current);
     peersRef.current[peerId] = pc;
     pc.onicecandidate = (event) => { if (event.candidate) currentSocket.emit('ice-candidate', { target: peerId, candidate: event.candidate }); };
     pc.ontrack = (event) => { setRemoteStreams(prev => ({ ...prev, [peerId]: event.streams[0] })); };
@@ -676,7 +699,8 @@ export default function MeetingRoom() {
         setTimeout(() => { sSocket.emit('media-status-change', { roomId, isMuted: false, isVideoOff: false }); }, 1000);
 
         sSocket.on('user-connected', async ({ userId }) => {
-          const pc = new RTCPeerConnection(peerConnectionConfig);
+          // NAYA: Updated to use dynamic iceConfig state
+          const pc = new RTCPeerConnection(iceConfigRef.current);
           screenPeersRef.current[userId] = pc;
           pc.onicecandidate = (e) => { if (e.candidate) sSocket.emit('ice-candidate', { target: userId, candidate: e.candidate }); };
           stream.getTracks().forEach(t => pc.addTrack(t, stream));
@@ -686,7 +710,8 @@ export default function MeetingRoom() {
         });
 
         sSocket.on('offer', async (data) => {
-          const pc = new RTCPeerConnection(peerConnectionConfig);
+          // NAYA: Updated to use dynamic iceConfig state
+          const pc = new RTCPeerConnection(iceConfigRef.current);
           screenPeersRef.current[data.caller] = pc;
           pc.onicecandidate = (e) => { if (e.candidate) sSocket.emit('ice-candidate', { target: data.caller, candidate: e.candidate }); };
           stream.getTracks().forEach(t => pc.addTrack(t, stream));
@@ -829,7 +854,7 @@ export default function MeetingRoom() {
     if (count <= 4) return 'grid-cols-2 grid-rows-2';  
     if (count <= 6) return 'grid-cols-2 grid-rows-3 md:grid-cols-3 md:grid-rows-2';   
     if (count <= 9) return 'grid-cols-3 grid-rows-3';
-    return 'grid-cols-3 grid-rows-4 md:grid-cols-4 md:grid-rows-3';    
+    return 'grid-cols-3 grid-rows-4 md:grid-cols-4 md:grid-rows-3';   
   };
 
   let autoPinned = null;
@@ -1205,7 +1230,7 @@ export default function MeetingRoom() {
         </div>
         
         {activeTab === 'chat' && (
-          <div className="flex-1 flex flex-col bg-slate-900/50">
+          <div className="flex-1 flex flex-col bg-slate-900/50 min-h-0 overflow-hidden">
             <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
               {messages.length === 0 ? (
                  <div className="text-center flex flex-col items-center justify-center h-full text-slate-500">
@@ -1228,7 +1253,7 @@ export default function MeetingRoom() {
               <div ref={messagesEndRef} className="h-2" />
             </div>
             
-            <div className="px-4 h-6 flex items-center">
+            <div className="px-4 h-6 flex items-center shrink-0">
               {typingUsers.length > 0 && (
                 <div className="text-xs text-blue-400 italic flex items-center gap-2 font-medium">
                   <div className="flex gap-0.5">
@@ -1241,7 +1266,7 @@ export default function MeetingRoom() {
               )}
             </div>
 
-            <form onSubmit={sendMessage} className="p-3 border-t border-slate-800 bg-slate-950 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+            <form onSubmit={sendMessage} className="shrink-0 p-3 border-t border-slate-800 bg-slate-950 pb-[calc(1rem+env(safe-area-inset-bottom))]">
               <div className="flex gap-2 items-center bg-slate-900 border border-slate-700 rounded-xl p-1 pr-2 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
                 <input 
                   type="text" 
