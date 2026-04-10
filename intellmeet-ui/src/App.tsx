@@ -70,7 +70,16 @@ const Dashboard = () => {
   const token = useAuthStore((state: unknown) => (state as AuthState).token);
   const setUser = useAuthStore((state: unknown) => (state as AuthState).setUser);
   
-  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'tasks' | 'analytics' | 'profile'>('home');
+  // FIX: UX Tab Persistence (Local Storage se active tab uthao ya 'home' set karo)
+  const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'tasks' | 'analytics' | 'profile'>(() => {
+    return (localStorage.getItem('intellmeet_active_tab') as any) || 'home';
+  });
+
+  // FIX: Jab bhi tab change ho, usko local storage me save kar do
+  useEffect(() => {
+    localStorage.setItem('intellmeet_active_tab', activeTab);
+  }, [activeTab]);
+
   const [joinCode, setJoinCode] = useState('');
   const [instantRoomCode] = useState(generateRoomCode());
   const [instantWaitingRoom, setInstantWaitingRoom] = useState(false);
@@ -104,6 +113,9 @@ const Dashboard = () => {
 
   useEffect(() => {
     if ((activeTab === 'schedule' || activeTab === 'history' || activeTab === 'tasks' || activeTab === 'analytics') && token) {
+      // FIX: Prevent API Spam
+      if (scheduledMeetings.length > 0) return;
+
       const fetchMeetings = async () => {
         setIsLoadingMeetings(true);
         try {
@@ -123,7 +135,7 @@ const Dashboard = () => {
       };
       fetchMeetings();
     }
-  }, [activeTab, token, API_URL, logout]);
+  }, [activeTab, token, API_URL, logout, scheduledMeetings.length]);
 
   const handleJoin = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -136,10 +148,24 @@ const Dashboard = () => {
 
   const startInstantMeeting = async () => {
     try {
+      // FIX: Generate strict local time to prevent server timezone issues
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const day = String(now.getDate()).padStart(2, '0');
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+
       const res = await fetch(`${API_URL}/meetings/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ title: 'Instant Meeting', roomId: instantRoomCode, isWaitingRoom: instantWaitingRoom })
+        body: JSON.stringify({ 
+          title: 'Instant Meeting', 
+          roomId: instantRoomCode, 
+          isWaitingRoom: instantWaitingRoom,
+          date: `${year}-${month}-${day}`,
+          time: `${hours}:${minutes}`
+        })
       });
       if (res.ok) {
         navigate(`/meeting/${instantRoomCode}`);
@@ -357,8 +383,14 @@ const Dashboard = () => {
   };
 
   const now = new Date();
-  const currentDate = now.toISOString().split('T')[0];
-  const currentTime = now.toTimeString().split(' ')[0];
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const hours = String(now.getHours()).padStart(2, '0');
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+
+  const currentDate = `${year}-${month}-${day}`;
+  const currentTime = `${hours}:${minutes}`;
 
   const upcomingMeetings = scheduledMeetings.filter(m => m.status !== 'Completed' && (m.date > currentDate || (m.date === currentDate && m.time >= currentTime)));
   const pastMeetings = scheduledMeetings.filter(m => m.status === 'Completed' || m.date < currentDate || (m.date === currentDate && m.time < currentTime));
@@ -374,7 +406,7 @@ const Dashboard = () => {
     return acc;
   }, {} as Record<string, number>);
   
-  const trendData = Object.keys(meetingDatesMap).slice(-7).map(date => ({
+  const trendData = Object.keys(meetingDatesMap).sort().slice(-7).map(date => ({
     name: date, Meetings: meetingDatesMap[date]
   }));
 
@@ -397,6 +429,19 @@ const Dashboard = () => {
       total: (m.tasks || []).length,
       progress: Math.round(((m.tasks || []).filter(t => t.status === 'done').length / (m.tasks || []).length) * 100)
     }));
+
+  const formatDisplayTime = (timeStr: string) => {
+    if(!timeStr) return '';
+    try {
+      const [h, m] = timeStr.split(':');
+      const hour = parseInt(h);
+      const ampm = hour >= 12 ? 'PM' : 'AM';
+      const hr = hour % 12 || 12;
+      return `${hr}:${m} ${ampm}`;
+    } catch(e) {
+      return timeStr;
+    }
+  };
 
   return (
     <div className="min-h-[100dvh] bg-slate-950 text-white flex flex-col md:flex-row font-sans relative overflow-hidden">
@@ -497,6 +542,8 @@ const Dashboard = () => {
          </div>
 
          <div className="max-w-7xl mx-auto p-4 sm:p-6 md:p-8 mt-2 md:mt-4">
+            
+            {/* HOME TAB */}
             {activeTab === 'home' && (
                <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
                   <div className="flex items-center gap-4 mb-6 md:mb-8">
@@ -559,6 +606,7 @@ const Dashboard = () => {
                </div>
             )}
 
+            {/* SCHEDULE TAB */}
             {activeTab === 'schedule' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 mb-6 md:mb-8">
@@ -583,7 +631,7 @@ const Dashboard = () => {
                                   <ShieldAlert size={12} className="mr-1"/> Waiting
                                 </span>
                               )}
-                              <p className="text-sm text-slate-400 mb-4 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {meeting.time}</p>
+                              <p className="text-sm text-slate-400 mb-4 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {formatDisplayTime(meeting.time)}</p>
                               <div className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800 mb-4">
                                  <span className="text-xs font-mono text-slate-300 font-bold tracking-wider truncate mr-2">{meeting.roomId}</span>
                                  <div className="flex gap-1 flex-shrink-0">
@@ -613,6 +661,7 @@ const Dashboard = () => {
                </div>
             )}
 
+            {/* HISTORY TAB */}
             {activeTab === 'history' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
                   <h2 className="text-2xl md:text-3xl font-bold mb-6 md:mb-8">Meeting History</h2>
@@ -620,11 +669,17 @@ const Dashboard = () => {
                      <div className="flex justify-center p-12"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
                   ) : pastMeetings.length > 0 ? (
                      <div className="grid grid-cols-1 gap-4">
-                        {pastMeetings.map(meeting => (
+                        {pastMeetings
+                           .slice()
+                           .sort((a, b) => {
+                              if (a.date !== b.date) return b.date.localeCompare(a.date);
+                              return b.time.localeCompare(a.time);
+                           })
+                           .map(meeting => (
                            <div key={meeting._id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all hover:border-slate-700">
                               <div className="flex-1 w-full">
                                 <h3 className="font-bold text-base md:text-lg text-white mb-1 truncate">{meeting.title}</h3>
-                                <p className="text-xs md:text-sm text-slate-400 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {meeting.time}</p>
+                                <p className="text-xs md:text-sm text-slate-400 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {formatDisplayTime(meeting.time)}</p>
                               </div>
                               <div className="flex flex-wrap gap-2 w-full md:w-auto">
                                 {(meeting.status === 'Completed' || meeting.summary) && (
@@ -650,6 +705,7 @@ const Dashboard = () => {
                </div>
             )}
 
+            {/* TASKS TAB */}
             {activeTab === 'tasks' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 w-full">
                   <div className="flex justify-between items-end mb-6 md:mb-8">
@@ -756,6 +812,7 @@ const Dashboard = () => {
                </div>
             )}
 
+            {/* ANALYTICS TAB */}
             {activeTab === 'analytics' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 w-full min-w-0">
                   <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6 md:mb-8">
@@ -899,6 +956,7 @@ const Dashboard = () => {
                </div>
             )}
 
+            {/* PROFILE TAB */}
             {activeTab === 'profile' && (
                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-lg">
                   <h2 className="text-2xl md:text-3xl font-bold mb-6 md:mb-8">Profile Settings</h2>
