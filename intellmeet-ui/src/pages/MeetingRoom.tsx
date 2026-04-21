@@ -389,7 +389,6 @@ export default function MeetingRoom() {
       Object.values(screenPeersRef.current).forEach(pc => pc.close());
       setLocalScreenStream(prev => { prev?.getTracks().forEach(t => t.stop()); return null; });
     };
-  // NAYA: Dependecy array me iceConfig add kiya
   }, [roomId, userName, userProfilePic, navigate, userIdStore ]); 
 
   const handleJoinClick = () => {
@@ -412,6 +411,7 @@ export default function MeetingRoom() {
     socket?.emit('update-notes', { roomId, notes: e.target.value });
   };
 
+  // FIX: Accurate Assignee Resolution Bug
   const handleAddTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskInput.trim()) return;
@@ -420,8 +420,13 @@ export default function MeetingRoom() {
     let assigneeNameValue = 'Unassigned';
 
     if (selectedAssignee !== 'unassigned') {
-        assigneeIdValue = selectedAssignee;
-        assigneeNameValue = peerNames[selectedAssignee] || userName; 
+        if (selectedAssignee === 'local') {
+            assigneeIdValue = userIdStore;
+            assigneeNameValue = userName;
+        } else {
+            assigneeIdValue = selectedAssignee;
+            assigneeNameValue = peerNames[selectedAssignee] || 'Participant'; 
+        }
     }
 
     const newTask = { 
@@ -499,6 +504,7 @@ export default function MeetingRoom() {
     } catch(e) { console.warn("Audio Context error:", e); }
   };
 
+  // FIX: Web Speech API Crash Handler 
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
@@ -544,8 +550,14 @@ export default function MeetingRoom() {
       } 
     };
 
+    // Auto restart on network or silent drops
     recognition.onerror = (event: any) => {
       if (event.error === 'not-allowed') console.warn("Microphone permission denied for captions.");
+      setTimeout(() => {
+         if (!isMuted && captionsEnabled && recognitionRef.current) {
+            try { recognitionRef.current.start(); } catch (e) {}
+         }
+      }, 1000);
     };
     
     if (!isMuted && captionsEnabled && !inLobby && !isWaiting) { 
@@ -622,7 +634,6 @@ export default function MeetingRoom() {
   };
 
   const createPeerConnection = (peerId: string, currentSocket: Socket, stream: MediaStream) => {
-    // NAYA: Updated to use dynamic iceConfig state
     const pc = new RTCPeerConnection(iceConfigRef.current);
     peersRef.current[peerId] = pc;
     pc.onicecandidate = (event) => { if (event.candidate) currentSocket.emit('ice-candidate', { target: peerId, candidate: event.candidate }); };
@@ -699,7 +710,6 @@ export default function MeetingRoom() {
         setTimeout(() => { sSocket.emit('media-status-change', { roomId, isMuted: false, isVideoOff: false }); }, 1000);
 
         sSocket.on('user-connected', async ({ userId }) => {
-          // NAYA: Updated to use dynamic iceConfig state
           const pc = new RTCPeerConnection(iceConfigRef.current);
           screenPeersRef.current[userId] = pc;
           pc.onicecandidate = (e) => { if (e.candidate) sSocket.emit('ice-candidate', { target: userId, candidate: e.candidate }); };
@@ -710,7 +720,6 @@ export default function MeetingRoom() {
         });
 
         sSocket.on('offer', async (data) => {
-          // NAYA: Updated to use dynamic iceConfig state
           const pc = new RTCPeerConnection(iceConfigRef.current);
           screenPeersRef.current[data.caller] = pc;
           pc.onicecandidate = (e) => { if (e.candidate) sSocket.emit('ice-candidate', { target: data.caller, candidate: e.candidate }); };

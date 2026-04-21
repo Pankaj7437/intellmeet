@@ -82,7 +82,6 @@ exports.loginUser = async (req, res) => {
                 token: tokens.accessToken,
                 accessToken: tokens.accessToken,
                 refreshToken: tokens.refreshToken,
-                // NAYA: profilePic add kiya taaki login ke baad turant photo dikhe
                 user: { _id: user._id, name: user.name, email: user.email, profilePic: user.profilePic } 
             });
         } else { res.status(401).json({ message: 'Invalid email or password' }); }
@@ -95,7 +94,6 @@ exports.updateProfile = async (req, res) => {
         if (user) {
             user.name = req.body.name || user.name;
             const updatedUser = await user.save();
-            // NAYA: profilePic add kiya
             res.json({ _id: updatedUser._id, name: updatedUser.name, email: updatedUser.email, profilePic: updatedUser.profilePic });
         } else { res.status(404).json({ message: 'User not found' }); }
     } catch (error) { res.status(500).json({ message: error.message }); }

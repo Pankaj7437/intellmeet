@@ -82,6 +82,27 @@ exports.deleteMeeting = async (req, res) => {
     } catch (error) { res.status(500).json({ message: error.message }); }
 };
 
+exports.addTask = async (req, res) => {
+    try {
+        const { roomId } = req.params;
+        const taskData = req.body; 
+        
+        const meeting = await Meeting.findOneAndUpdate(
+            { roomId: roomId },
+            { $push: { tasks: taskData } },
+            { new: true, returnDocument: 'after' }
+        )
+        .populate('host', 'name email profilePic')
+        .populate('participants', 'name email profilePic');
+
+        if(!meeting) return res.status(404).json({message: "Meeting not found"});
+        
+        res.status(201).json(meeting);
+    } catch (error) { 
+        res.status(500).json({ message: error.message }); 
+    }
+};
+
 exports.updateTaskStatus = async (req, res) => {
     try {
         const { roomId, taskId } = req.params;

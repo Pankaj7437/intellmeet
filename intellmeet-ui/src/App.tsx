@@ -1,11 +1,14 @@
-import { useState, useEffect, type ReactNode, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type ReactNode, type FormEvent } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { 
-  Video, Calendar, User, LogOut, Copy, Plus, 
-  Users, Edit2, Lock, Loader2, X, Trash2, Clock, ShieldAlert, History, Link as LinkIcon, FileText, CheckSquare, BarChart3, Target, CheckCircle2, TrendingUp, Activity, Download
+import {
+  Video, Calendar, User, LogOut, Copy, Plus, Menu, ChevronLeft, Search,
+  Users, Lock, Loader2, X, Trash2, Clock, History, CheckSquare, BarChart3, 
+  Target, CheckCircle2, TrendingUp, Activity, Download, ArrowRight, 
+  AlertTriangle, Mail, ShieldCheck, UserMinus, Camera, ChevronDown, ChevronUp
 } from 'lucide-react';
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell 
+import {
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, 
+  ResponsiveContainer, PieChart, Pie, Cell
 } from 'recharts';
 
 import Login from './pages/Login';
@@ -21,6 +24,8 @@ interface TaskData {
   id: string;
   text: string;
   status: 'todo' | 'in-progress' | 'done';
+  assigneeId?: string;
+  assigneeName?: string;
 }
 
 interface MeetingData {
@@ -69,42 +74,95 @@ const Dashboard = () => {
   const logout = useAuthStore((state: unknown) => (state as AuthState).logout);
   const token = useAuthStore((state: unknown) => (state as AuthState).token);
   const setUser = useAuthStore((state: unknown) => (state as AuthState).setUser);
-  
-  // FIX: UX Tab Persistence (Local Storage se active tab uthao ya 'home' set karo)
+
   const [activeTab, setActiveTab] = useState<'home' | 'schedule' | 'history' | 'tasks' | 'analytics' | 'profile'>(() => {
     return (localStorage.getItem('intellmeet_active_tab') as any) || 'home';
   });
 
-  // FIX: Jab bhi tab change ho, usko local storage me save kar do
+  const [isSidebarOpen, setIsSidebarOpen] = useState(
+    typeof window !== "undefined" ? window.innerWidth >= 768 : false
+  );
+  const [mouse, setMouse] = useState({ x: 0, y: 0 });
+  const [trailPoints, setTrailPoints] = useState<{ x: number, y: number }[]>([]);
+  const [isMouseOnMain, setIsMouseOnMain] = useState(false);
+  const rafRef = useRef<number | null>(null);
+
+  // States for Filter, Search & Pagination
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'completed' | 'expired'>('all');
+  const [historyPage, setHistoryPage] = useState(1);
+  const itemsPerPage = 6;
+  const [taskSearch, setTaskSearch] = useState('');
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [passStrength, setPassStrength] = useState({ score: 0, label: '', color: 'bg-transparent' });
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  // Modals
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [showTerminateModal, setShowTerminateModal] = useState(false);
+  
+  // Manual Task Creation
+  const [showAddTaskModal, setShowAddTaskModal] = useState(false);
+  const [newTaskText, setNewTaskText] = useState('');
+  const [newTaskMeetingId, setNewTaskMeetingId] = useState('');
+  const [newTaskAssignee, setNewTaskAssignee] = useState('');
+  const [isCreatingTask, setIsCreatingTask] = useState(false);
+
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const firstInputRef = useRef<HTMLInputElement | null>(null);
+  const [isClosing, setIsClosing] = useState(false);
+
+  const [confirmDeleteText, setConfirmDeleteText] = useState('');
+
+  const handleFinalWipe = () => {
+    logout();
+    navigate('/');
+    showToast("Account deleted successfully", "success");
+  };
+
   useEffect(() => {
+    setShowScheduleModal(false);
     localStorage.setItem('intellmeet_active_tab', activeTab);
   }, [activeTab]);
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      setMouse({ x: e.clientX, y: e.clientY });
+      rafRef.current = null;
+    });
+  };
+
+  useEffect(() => {
+    const animate = () => {
+      setTrailPoints(prev => [{ x: mouse.x, y: mouse.y }, ...prev].slice(0, 12));
+      requestAnimationFrame(animate);
+    };
+    const handle = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(handle);
+  }, [mouse]);
 
   const [joinCode, setJoinCode] = useState('');
   const [instantRoomCode] = useState(generateRoomCode());
   const [instantWaitingRoom, setInstantWaitingRoom] = useState(false);
-  
   const env = (import.meta as unknown as { env: Record<string, string> }).env;
   const base_url = (env.VITE_API_URL || 'http://127.0.0.1:5000').replace(/\/api\/?$/, '');
   const API_URL = `${base_url}/api`;
-
-  const [toast, setToast] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
+  const [toast, setToast] = useState<{ msg: string, type: 'success' | 'error' } | null>(null);
   const [newName, setNewName] = useState(user?.name || user?.firstName || '');
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
-
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState('');
   const [meetingDate, setMeetingDate] = useState('');
   const [meetingTime, setMeetingTime] = useState('');
   const [isWaitingRoom, setIsWaitingRoom] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
-  
   const [scheduledMeetings, setScheduledMeetings] = useState<MeetingData[]>([]);
-  const [isLoadingMeetings, setIsLoadingMeetings] = useState(false);
+  const [isShaking, setIsShaking] = useState(false);
+  const [deleteHint, setDeleteHint] = useState('');
 
   const showToast = (msg: string, type: 'success' | 'error') => {
     setToast({ msg, type });
@@ -112,26 +170,63 @@ const Dashboard = () => {
   };
 
   useEffect(() => {
-    if ((activeTab === 'schedule' || activeTab === 'history' || activeTab === 'tasks' || activeTab === 'analytics') && token) {
-      // FIX: Prevent API Spam
-      if (scheduledMeetings.length > 0) return;
+    if (!showTerminateModal) return;
+    const word = "DELETE";
+    let i = 0;
+    const interval = setInterval(() => {
+      setDeleteHint(word.slice(0, i + 1));
+      i++;
+      if (i === word.length) clearInterval(interval);
+    }, 120);
+    return () => clearInterval(interval);
+  }, [showTerminateModal]);
 
+  useEffect(() => {
+    setShowTerminateModal(false);
+    setConfirmDeleteText('');
+  }, [activeTab]);
+
+  const closeModal = () => {
+    setIsClosing(true);
+    setTimeout(() => {
+      setShowTerminateModal(false);
+      setConfirmDeleteText('');
+      setIsClosing(false);
+    }, 180);
+  };
+
+  useEffect(() => {
+    if (!showTerminateModal) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    setTimeout(() => firstInputRef.current?.focus(), 0);
+
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeModal();
+      if (e.key === 'Tab') {
+        const focusable = modalRef.current?.querySelectorAll<HTMLElement>('input, button, [tabindex]:not([tabindex="-1"])');
+        if (!focusable || focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } 
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => { window.removeEventListener('keydown', handleKey); document.body.style.overflow = prev; };
+  }, [showTerminateModal]);
+
+  useEffect(() => { if (showTerminateModal) closeModal(); }, [activeTab]);
+
+  useEffect(() => {
+    if ((activeTab === 'home' || activeTab === 'schedule' || activeTab === 'history' || activeTab === 'tasks' || activeTab === 'analytics') && token) {
+      if (scheduledMeetings.length > 0) return;
       const fetchMeetings = async () => {
-        setIsLoadingMeetings(true);
         try {
-          const res = await fetch(`${API_URL}/meetings`, {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
+          const res = await fetch(`${API_URL}/meetings`, { headers: { 'Authorization': `Bearer ${token}` } });
           if (res.status === 401) { logout(); return; }
-          if (res.ok) {
-            const data = await res.json();
-            setScheduledMeetings(data);
-          }
-        } catch (err) {
-          console.error(err);
-        } finally { 
-          setIsLoadingMeetings(false); 
-        }
+          if (res.ok) { const data = await res.json(); setScheduledMeetings(data); }
+        } catch (err) { console.error(err); }
       };
       fetchMeetings();
     }
@@ -148,34 +243,15 @@ const Dashboard = () => {
 
   const startInstantMeeting = async () => {
     try {
-      // FIX: Generate strict local time to prevent server timezone issues
       const now = new Date();
-      const year = now.getFullYear();
-      const month = String(now.getMonth() + 1).padStart(2, '0');
-      const day = String(now.getDate()).padStart(2, '0');
-      const hours = String(now.getHours()).padStart(2, '0');
-      const minutes = String(now.getMinutes()).padStart(2, '0');
-
       const res = await fetch(`${API_URL}/meetings/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ 
-          title: 'Instant Meeting', 
-          roomId: instantRoomCode, 
-          isWaitingRoom: instantWaitingRoom,
-          date: `${year}-${month}-${day}`,
-          time: `${hours}:${minutes}`
-        })
+        body: JSON.stringify({ title: 'Instant Meeting', roomId: instantRoomCode, isWaitingRoom: instantWaitingRoom, date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`, time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}` })
       });
-      if (res.ok) {
-        navigate(`/meeting/${instantRoomCode}`);
-      } else {
-        throw new Error('Failed to start meeting');
-      }
-    } catch (err) { 
-      const error = err as Error;
-      showToast(error.message || 'Error creating meeting', 'error'); 
-    }
+      if (res.ok) { navigate(`/meeting/${instantRoomCode}`); }
+      else { throw new Error('Failed to start meeting'); }
+    } catch (err) { showToast((err as Error).message || 'Error creating meeting', 'error'); }
   };
 
   const copyToClipboard = (text: string, isLink: boolean = false) => {
@@ -199,29 +275,52 @@ const Dashboard = () => {
         setShowScheduleModal(false);
         setMeetingTitle(''); setMeetingDate(''); setMeetingTime('');
         showToast('Meeting Scheduled!', 'success');
-      } else {
-        throw new Error('Failed to schedule');
       }
-    } catch (err) { 
-      const error = err as Error;
-      showToast(error.message || 'Failed to schedule', 'error'); 
-    } finally { 
-      setIsScheduling(false); 
-    }
+    } catch (err) { showToast((err as Error).message || 'Failed to schedule', 'error'); } finally { setIsScheduling(false); }
   };
 
   const handleDeleteMeeting = async (id: string) => {
     try {
-      const res = await fetch(`${API_URL}/meetings/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+      const res = await fetch(`${API_URL}/meetings/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+      if (res.ok) { setScheduledMeetings(prev => prev.filter(m => m._id !== id)); showToast('Meeting removed', 'success'); }
+    } catch (err) { console.error(err); }
+  };
+
+  const handleCreateManualTask = async (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!newTaskMeetingId) return showToast("Select a meeting to attach this task", "error");
+    setIsCreatingTask(true);
+    
+    const newTaskObj: TaskData = {
+      id: Date.now().toString(),
+      text: newTaskText,
+      status: 'todo',
+      assigneeName: newTaskAssignee || 'Unassigned'
+    };
+
+    try {
+      setScheduledMeetings(prev => prev.map(m => {
+        if(m.roomId === newTaskMeetingId) {
+          return { ...m, tasks: [...(m.tasks || []), newTaskObj] };
+        }
+        return m;
+      }));
+
+      await fetch(`${API_URL}/meetings/room/${newTaskMeetingId}/tasks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(newTaskObj)
       });
-      if (res.ok) {
-        setScheduledMeetings(prev => prev.filter(m => m._id !== id));
-        showToast('Meeting removed', 'success');
-      }
+      
+      showToast('Task created successfully!', 'success');
+      setShowAddTaskModal(false);
+      setNewTaskText('');
+      setNewTaskAssignee('');
     } catch (err) { 
-      console.error(err); 
+      console.log(err);
+      showToast('Error saving task', 'error'); 
+    } finally { 
+      setIsCreatingTask(false); 
     }
   };
 
@@ -229,88 +328,51 @@ const Dashboard = () => {
     if (!newName.trim() || newName === user?.name) return;
     setIsUpdatingProfile(true);
     try {
-      const res = await fetch(`${API_URL}/auth/profile`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ name: newName })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (user) setUser({ ...user, name: data.name });
-        showToast('Profile updated!', 'success');
-      } else {
-        throw new Error('Update failed');
-      }
-    } catch (err) { 
-      showToast('Error updating profile', 'error'); 
-    } finally { 
-      setIsUpdatingProfile(false); 
-    }
+      const res = await fetch(`${API_URL}/auth/profile`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ name: newName }) });
+      if (res.ok) { const data = await res.json(); if (user) setUser({ ...user, name: data.name }); showToast('Profile updated!', 'success'); }
+    } catch (err) { showToast('Error updating profile', 'error'); } finally { setIsUpdatingProfile(false); }
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('File size should be less than 2MB', 'error');
-      return;
-    }
-
+    if (file.size > 2 * 1024 * 1024) { showToast('File size should be less than 2MB', 'error'); return; }
+    setAvatarPreview(URL.createObjectURL(file));
     setIsUploadingAvatar(true);
     const formData = new FormData();
     formData.append('avatar', file);
-
     try {
-      const res = await fetch(`${API_URL}/auth/profile/avatar`, {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData
-      });
-      
-      if (res.ok) {
-        const updatedUser = await res.json();
-        setUser(updatedUser); 
-        showToast('Profile picture updated!', 'success');
-      } else {
-        throw new Error('Failed to upload');
-      }
-    } catch (err) {
-      showToast('Error uploading profile picture', 'error');
-    } finally {
-      setIsUploadingAvatar(false);
-    }
+      const res = await fetch(`${API_URL}/auth/profile/avatar`, { method: 'PUT', headers: { 'Authorization': `Bearer ${token}` }, body: formData });
+      if (res.ok) { const updatedUser = await res.json(); setUser(updatedUser); showToast('Profile picture updated!', 'success'); }
+    } catch (err) { showToast('Error uploading profile picture', 'error'); } finally { setIsUploadingAvatar(false); setAvatarPreview(null); }
+  };
+
+  const checkPasswordStrength = (pass: string) => {
+    setNewPassword(pass);
+    if (!pass) { setPassStrength({ score: 0, label: '', color: 'bg-transparent' }); return; }
+    const score = pass.length < 6 ? 1 : pass.length < 10 ? 2 : 3;
+    const feedback = score === 1 ? { label: 'Weak', color: 'bg-rose-500' } : score === 2 ? { label: 'Medium', color: 'bg-amber-500' } : { label: 'Strong', color: 'bg-emerald-500' };
+    setPassStrength({ score, ...feedback });
   };
 
   const handleUpdatePassword = async () => {
     if (!currentPassword || newPassword.length < 6) return;
     setIsUpdatingPassword(true);
     try {
-      const res = await fetch(`${API_URL}/auth/password`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ currentPassword, newPassword })
-      });
-      if (res.ok) {
-        showToast('Password updated!', 'success');
-        setCurrentPassword(''); setNewPassword('');
-      } else {
-        throw new Error('Password update failed');
+      const res = await fetch(`${API_URL}/auth/password`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ currentPassword, newPassword }) });
+      if (res.ok) { 
+        showToast('Password updated successfully!', 'success'); 
+        setCurrentPassword(''); 
+        setNewPassword(''); 
+        setPassStrength({ score: 0, label: '', color: 'bg-transparent' }); 
+        setIsChangingPassword(false);
       }
-    } catch (err) { 
-      showToast('Error updating password', 'error'); 
-    } finally { 
-      setIsUpdatingPassword(false); 
-    }
+    } catch (err) { showToast('Error updating password', 'error'); } finally { setIsUpdatingPassword(false); }
   };
 
   const handleUpdateTaskStatus = async (roomId: string, taskId: string, newStatus: 'todo' | 'in-progress' | 'done') => {
     try {
-      const res = await fetch(`${API_URL}/meetings/room/${roomId}/tasks/${taskId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ status: newStatus })
-      });
+      const res = await fetch(`${API_URL}/meetings/room/${roomId}/tasks/${taskId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, body: JSON.stringify({ status: newStatus }) });
       if (res.ok) {
         setScheduledMeetings(prev => prev.map(m => {
           if (m.roomId === roomId && m.tasks) {
@@ -320,18 +382,13 @@ const Dashboard = () => {
         }));
         showToast('Task updated!', 'success');
       }
-    } catch (err) {
-      showToast('Failed to update task', 'error');
-    }
+    } catch (err) { showToast('Failed to update task', 'error'); }
   };
 
   const handleDeleteTask = async (roomId: string, taskId: string) => {
-    if(!window.confirm("Are you sure you want to delete this task?")) return;
+    if (!window.confirm("Are you sure you want to delete this task?")) return;
     try {
-      const res = await fetch(`${API_URL}/meetings/room/${roomId}/tasks/${taskId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch(`${API_URL}/meetings/room/${roomId}/tasks/${taskId}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
       if (res.ok) {
         setScheduledMeetings(prev => prev.map(m => {
           if (m.roomId === roomId && m.tasks) {
@@ -339,697 +396,864 @@ const Dashboard = () => {
           }
           return m;
         }));
-        showToast('Task deleted successfully!', 'success');
+        showToast('Task deleted!', 'success');
       }
-    } catch (err) {
-      showToast('Failed to delete task', 'error');
-    }
+    } catch (err) { showToast('Failed to delete task', 'error'); }
   };
 
-  const handleDragStart = (e: React.DragEvent, taskId: string, roomId: string) => {
-    e.dataTransfer.setData('taskId', taskId);
-    e.dataTransfer.setData('roomId', roomId);
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); 
-  };
-
+  const handleDragStart = (e: React.DragEvent, taskId: string, roomId: string) => { e.dataTransfer.setData('taskId', taskId); e.dataTransfer.setData('roomId', roomId); };
+  const handleDragOver = (e: React.DragEvent) => e.preventDefault();
   const handleDrop = async (e: React.DragEvent, newStatus: 'todo' | 'in-progress' | 'done') => {
     e.preventDefault();
-    const taskId = e.dataTransfer.getData('taskId');
-    const roomId = e.dataTransfer.getData('roomId');
-    if (taskId && roomId) {
-      await handleUpdateTaskStatus(roomId, taskId, newStatus);
-    }
+    const taskId = e.dataTransfer.getData('taskId'); const roomId = e.dataTransfer.getData('roomId');
+    if (taskId && roomId) await handleUpdateTaskStatus(roomId, taskId, newStatus);
   };
 
-  const exportAnalyticsCSV = () => {
-    if (meetingWiseData.length === 0) {
-      showToast("No data to export", "error");
-      return;
-    }
-    const headers = ['Meeting Title,Date,Total Tasks,Done Tasks,Progress %'];
-    const rows = meetingWiseData.map(m => `"${m.fullTitle}",${m.date},${m.total},${m['Done']},${m.progress}%`);
-    const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "IntellMeet_Analytics.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    showToast("Analytics Exported Successfully!", "success");
+  const formatDisplayTime = (timeStr: string) => {
+    if (!timeStr) return '';
+    try {
+      const [h, m] = timeStr.split(':'); const hour = parseInt(h); const ampm = hour >= 12 ? 'PM' : 'AM';
+      const hr = hour % 12 || 12; return `${hr}:${m} ${ampm}`;
+    } catch (e) { return timeStr; }
   };
 
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-
-  const currentDate = `${year}-${month}-${day}`;
-  const currentTime = `${hours}:${minutes}`;
-
-  const upcomingMeetings = scheduledMeetings.filter(m => m.status !== 'Completed' && (m.date > currentDate || (m.date === currentDate && m.time >= currentTime)));
-  const pastMeetings = scheduledMeetings.filter(m => m.status === 'Completed' || m.date < currentDate || (m.date === currentDate && m.time < currentTime));
+  const currentDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
   const allTasks = scheduledMeetings.flatMap(m => (m.tasks || []).map(t => ({ ...t, roomId: m.roomId, roomTitle: m.title })));
-  const todoTasks = allTasks.filter(t => t.status === 'todo');
-  const inProgressTasks = allTasks.filter(t => t.status === 'in-progress');
-  const doneTasks = allTasks.filter(t => t.status === 'done');
+  const doneTasksCount = allTasks.filter(t => t.status === 'done').length;
 
-  const meetingDatesMap = scheduledMeetings.reduce((acc, m) => {
-    const d = m.date.substring(5); 
-    acc[d] = (acc[d] || 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
+  const pastMeetingsFiltered = scheduledMeetings
+    .filter(m => {
+      const isPast = m.status === 'Completed' || m.date < currentDateStr || (m.date === currentDateStr && m.time < currentTimeStr);
+      if (!isPast) return false;
+      const matchesSearch = m.title.toLowerCase().includes(historySearch.toLowerCase());
+      const matchesFilter = historyFilter === 'all' ? true : historyFilter === 'completed' ? m.status === 'Completed' : m.status !== 'Completed';
+      return matchesSearch && matchesFilter;
+    })
+    .sort((a, b) => {
+      if (a.date !== b.date) return b.date.localeCompare(a.date);
+      return b.time.localeCompare(a.time);
+    });
+
+  const pagedHistory = pastMeetingsFiltered.slice(0, historyPage * itemsPerPage);
+  const upcomingMeetings = scheduledMeetings.filter(m => m.status !== 'Completed' && (m.date > currentDateStr || (m.date === currentDateStr && m.time >= currentTimeStr)));
+
+  const filteredTasks = allTasks.filter(t =>
+    t.text.toLowerCase().includes(taskSearch.toLowerCase()) ||
+    t.roomTitle.toLowerCase().includes(taskSearch.toLowerCase())
+  );
+
+  const todoTasks = filteredTasks.filter(t => t.status === 'todo');
+  const inProgressTasks = filteredTasks.filter(t => t.status === 'in-progress');
+  const doneTasks = filteredTasks.filter(t => t.status === 'done');
+
+  const meetingDatesMap = scheduledMeetings.reduce((acc, m) => { const d = m.date.substring(5); acc[d] = (acc[d] || 0) + 1; return acc; }, {} as Record<string, number>);
+  const trendData = Object.keys(meetingDatesMap).sort().slice(-7).map(date => ({ name: date, Meetings: meetingDatesMap[date] }));
   
-  const trendData = Object.keys(meetingDatesMap).sort().slice(-7).map(date => ({
-    name: date, Meetings: meetingDatesMap[date]
-  }));
+  if (trendData.length === 1) {
+      trendData.unshift({ name: 'Prev', Meetings: 0 });
+  }
 
   const pieChartData = [
-    { name: 'To Do', value: todoTasks.length, color: '#ef4444' }, 
-    { name: 'In Progress', value: inProgressTasks.length, color: '#eab308' }, 
-    { name: 'Done', value: doneTasks.length, color: '#10b981' }, 
+    { name: 'To Do', value: todoTasks.length, color: '#f43f5e' },
+    { name: 'In Progress', value: inProgressTasks.length, color: '#f59e0b' },
+    { name: 'Completed', value: doneTasks.length, color: '#10b981' },
   ].filter(item => item.value > 0);
 
-  const meetingWiseData = scheduledMeetings
-    .filter(m => m.tasks && m.tasks.length > 0)
-    .slice(-6)
-    .map(m => ({
-      name: m.title.length > 12 ? m.title.substring(0, 12) + '...' : m.title,
-      fullTitle: m.title,
-      date: m.date,
-      'To Do': (m.tasks || []).filter(t => t.status === 'todo').length,
-      'In Progress': (m.tasks || []).filter(t => t.status === 'in-progress').length,
-      'Done': (m.tasks || []).filter(t => t.status === 'done').length,
-      total: (m.tasks || []).length,
-      progress: Math.round(((m.tasks || []).filter(t => t.status === 'done').length / (m.tasks || []).length) * 100)
-    }));
+  const meetingWiseData = scheduledMeetings.filter(m => m.tasks && m.tasks.length > 0).slice(-6).map(m => ({
+    name: m.title.length > 12 ? m.title.substring(0, 12) + '...' : m.title, fullTitle: m.title, date: m.date, total: (m.tasks || []).length, Done: (m.tasks || []).filter(t => t.status === 'done').length, progress: Math.round(((m.tasks || []).filter(t => t.status === 'done').length / (m.tasks || []).length) * 100)
+  }));
 
-  const formatDisplayTime = (timeStr: string) => {
-    if(!timeStr) return '';
-    try {
-      const [h, m] = timeStr.split(':');
-      const hour = parseInt(h);
-      const ampm = hour >= 12 ? 'PM' : 'AM';
-      const hr = hour % 12 || 12;
-      return `${hr}:${m} ${ampm}`;
-    } catch(e) {
-      return timeStr;
-    }
+  const exportAnalyticsCSV = () => {
+    if (meetingWiseData.length === 0) { showToast("No data available to export", "error"); return; }
+    const rows = meetingWiseData.map(m => `"${m.fullTitle}",${m.date},${m.total},${m.Done},${m.progress}%`);
+    const csvContent = "data:text/csv;charset=utf-8,Meeting,Date,Total Tasks,Done,Progress\n" + rows.join('\n');
+    const link = document.createElement("a"); link.setAttribute("href", encodeURI(csvContent)); link.setAttribute("download", "IntellMeet_Analytics.csv");
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    showToast("Analytics Exported!", "success");
+  };
+
+  const tabList = ['home', 'schedule', 'history', 'tasks', 'analytics', 'profile'] as const;
+  const activeIndex = tabList.indexOf(activeTab as any);
+  const filterList = ['all', 'completed', 'expired'] as const;
+
+  const stats = [
+    { label: "Total Meetings", value: scheduledMeetings.length.toString(), icon: Video, color: "text-cyan-400", bg: "bg-cyan-500/10" },
+    { label: "Hours Logged", value: `${scheduledMeetings.filter(m => m.status === 'Completed').length}h`, icon: Clock, color: "text-purple-400", bg: "bg-purple-500/10" },
+    { label: "Total Tasks", value: allTasks.length.toString(), icon: CheckSquare, color: "text-emerald-400", bg: "bg-emerald-500/10" },
+    { label: "Task Efficiency", value: `${allTasks.length > 0 ? Math.round((doneTasksCount / allTasks.length) * 100) : 0}%`, icon: TrendingUp, color: "text-amber-400", bg: "bg-amber-500/10" },
+  ];
+
+  const tabLabels: Record<string, string> = {
+    home: 'Home', schedule: 'Schedule', history: 'History',
+    tasks: 'Tasks', analytics: 'Dashboard', profile: 'Profile'
   };
 
   return (
-    <div className="min-h-[100dvh] bg-slate-950 text-white flex flex-col md:flex-row font-sans relative overflow-hidden">
-      {toast && (
-        <div className={`fixed top-4 right-4 p-4 rounded-xl shadow-2xl z-[100] border-l-4 animate-in slide-in-from-top-4 fade-in ${toast.type === 'success' ? 'bg-slate-800 border-emerald-500 text-emerald-400' : 'bg-slate-800 border-red-500 text-red-400'}`}>
-          <p className="font-semibold text-sm">{toast.msg}</p>
-        </div>
-      )}
+    <div className="min-h-[100dvh] bg-[#020617] text-white flex flex-col md:flex-row font-sans relative overflow-hidden">
 
-      {showScheduleModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[100] px-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-6 relative shadow-2xl">
-            <button onClick={() => setShowScheduleModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white"><X size={20}/></button>
-            <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-blue-500"><Calendar size={24}/> Schedule Meeting</h2>
-            <form onSubmit={handleScheduleMeeting} className="space-y-4">
-              <input type="text" value={meetingTitle} onChange={e=>setMeetingTitle(e.target.value)} placeholder="Title" className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 outline-none focus:border-blue-500" required />
-              <div className="grid grid-cols-2 gap-4">
-                <input type="date" value={meetingDate} onChange={e=>setMeetingDate(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 outline-none focus:border-blue-500" required />
-                <input type="time" value={meetingTime} onChange={e=>setMeetingTime(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 outline-none focus:border-blue-500" required />
-              </div>
-              <label className="flex items-center gap-2 mt-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" checked={isWaitingRoom} onChange={e => setIsWaitingRoom(e.target.checked)} className="rounded text-blue-500 bg-slate-800 border-slate-700 w-4 h-4" />
-                Enable Waiting Room
-              </label>
-              <button type="submit" disabled={isScheduling} className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-xl font-bold flex justify-center items-center gap-2 transition">
-                {isScheduling && <Loader2 size={18} className="animate-spin" />} Confirm
+      {/* SIDEBAR */}
+      {!showScheduleModal && !showTerminateModal && !showAddTaskModal && (
+        <div
+          className={`
+            fixed md:sticky top-0 left-0 h-full z-[210]
+            bg-[#020617]/95 backdrop-blur-3xl border-r border-white/10
+            flex flex-col
+            transition-all duration-300 ease-in-out
+            ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+            w-[280px] sm:w-[320px] ${isSidebarOpen ? 'md:w-64' : 'md:w-20'}
+            overflow-y-auto overflow-x-hidden
+            `}
+        >
+          {/* Top Section */}
+          <div
+            className={`flex items-center justify-between md:justify-start gap-3 p-6 border-b border-white/10 h-[80px] ${!isSidebarOpen && 'md:justify-center'}`}
+          >
+            <div className="flex items-center gap-3">
+              <button
+                className="bg-gradient-to-br from-teal-500 to-cyan-500 p-2 rounded-xl shadow-lg shadow-cyan-500/30 hover:scale-110 active:scale-90 transition-transform flex-shrink-0"
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              >
+                {isSidebarOpen ? <ChevronLeft size={20} /> : <Menu size={20} />}
               </button>
-            </form>
+
+              {isSidebarOpen && (
+                <h1 className="text-lg md:text-xl font-bold tracking-[0.15em] bg-gradient-to-r from-white to-cyan-300 bg-clip-text text-transparent whitespace-nowrap overflow-hidden uppercase">
+                  INTELLMEET
+                </h1>
+              )}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div className="flex flex-col w-full flex-1 p-3 gap-2 relative">
+            {isSidebarOpen && (
+              <div
+                className="hidden md:block absolute left-3 right-3 h-[48px] bg-cyan-500/10 border border-cyan-500/30 rounded-xl transition-all duration-300 ease-in-out z-0 pointer-events-none shadow-[0_0_20px_rgba(34,211,238,0.2)]"
+                style={{ transform: `translateY(${activeIndex * 56}px)` }}
+              />
+            )}
+
+            {tabList.map((id) => {
+              const icons: Record<string, any> = {
+                home: Video, schedule: Calendar, history: History,
+                tasks: CheckSquare, analytics: BarChart3, profile: User
+              };
+              const Icon = icons[id];
+              const label = tabLabels[id];
+
+              return (
+                <button
+                  key={id}
+                  onClick={() => { setActiveTab(id as any); if (window.innerWidth < 768) setIsSidebarOpen(false); }}
+                  className={`flex items-center gap-4 p-3 md:px-4 md:py-3 rounded-xl transition-all duration-300 relative z-10 h-[48px] w-full ${!isSidebarOpen && 'md:justify-center'} ${activeTab === id ? 'text-cyan-400' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  <Icon size={20} className={activeTab === id ? 'scale-110' : ''} />
+                  {isSidebarOpen && <span className="text-xs font-bold tracking-widest uppercase">{label}</span>}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Logout Container */}
+          <div className="mt-auto p-4 border-t border-white/10">
+            <button
+              onClick={() => { logout(); navigate('/'); }}
+              className={`flex items-center gap-4 w-full p-3 rounded-xl text-red-400/80 hover:bg-red-500/10 transition-all group ${!isSidebarOpen && 'justify-center'}`}
+            >
+              <LogOut size={20} className="group-hover:translate-x-1 transition-transform" />
+              {isSidebarOpen && <span className="text-xs font-bold tracking-widest uppercase">Logout</span>}
+            </button>
           </div>
         </div>
       )}
 
-      <div className="w-full md:w-64 bg-slate-900 border-t md:border-t-0 md:border-r border-slate-800 flex flex-row md:flex-col justify-between fixed bottom-0 md:relative z-50 md:z-auto order-last md:order-first px-2 md:px-0 pb-safe md:pb-0">
-         <div className="hidden md:flex items-center gap-3 p-6 border-b border-slate-800">
-            <div className="bg-blue-600 p-2 rounded-xl"><Video size={24} className="text-white" /></div>
-            <h1 className="text-xl font-bold tracking-tight">IntellMeet</h1>
-         </div>
-         
-         <div className="flex flex-row md:flex-col w-full md:flex-1 p-2 md:p-4 gap-1 sm:gap-2 justify-between md:justify-start overflow-x-auto no-scrollbar">
-            <button onClick={() => setActiveTab('home')} className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all min-w-[60px] md:min-w-0 ${activeTab === 'home' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
-               <Video size={22} className="md:w-5 md:h-5" />
-               <span className="text-[10px] md:text-sm font-medium">Home</span>
-            </button>
-            <button onClick={() => setActiveTab('schedule')} className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all min-w-[60px] md:min-w-0 ${activeTab === 'schedule' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
-               <Calendar size={22} className="md:w-5 md:h-5" />
-               <span className="text-[10px] md:text-sm font-medium">Schedule</span>
-            </button>
-            <button onClick={() => setActiveTab('history')} className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all min-w-[60px] md:min-w-0 ${activeTab === 'history' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
-               <History size={22} className="md:w-5 md:h-5" />
-               <span className="text-[10px] md:text-sm font-medium">History</span>
-            </button>
-            <button onClick={() => setActiveTab('tasks')} className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all min-w-[60px] md:min-w-0 ${activeTab === 'tasks' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
-              <CheckSquare size={22} className="md:w-5 md:h-5" />
-              <span className="text-[10px] md:text-sm font-medium">Tasks</span>
-            </button>
-            <button onClick={() => setActiveTab('analytics')} className={`flex flex-col md:flex-row items-center gap-1 md:gap-3 p-2 md:px-4 md:py-3 rounded-xl transition-all min-w-[60px] md:min-w-0 ${activeTab === 'analytics' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
-              <BarChart3 size={22} className="md:w-5 md:h-5" />
-              <span className="text-[10px] md:text-sm font-medium">Analytics</span>
-            </button>
-            <button onClick={() => setActiveTab('profile')} className={`hidden md:flex md:flex-row items-center md:gap-3 md:px-4 md:py-3 rounded-xl transition-all md:min-w-0 ${activeTab === 'profile' ? 'bg-blue-600/15 text-blue-500' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}>
-               {user?.profilePic ? (
-                  <img src={user.profilePic} className="md:w-6 md:h-6 rounded-full object-cover border border-slate-700" alt="Profile" />
-               ) : (
-                  <User size={22} className="md:w-5 md:h-5" />
-               )}
-               <span className="text-[10px] md:text-sm font-medium">Profile</span>
-            </button>
-         </div>
+      {/* MOBILE OVERLAY */}
+      {isSidebarOpen && !showScheduleModal && !showTerminateModal && !showAddTaskModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] md:hidden" onClick={() => setIsSidebarOpen(false)} />
+      )}
 
-         <div className="hidden md:block p-4 border-t border-slate-800 mt-auto">
-            <button onClick={() => { logout(); navigate('/'); }} className="flex items-center gap-3 w-full p-3 rounded-xl text-red-400 hover:bg-red-500/10 transition-colors">
-               <LogOut size={20} />
-               <span className="text-sm font-medium">Logout</span>
-            </button>
-         </div>
-      </div>
+      {/* CONTENT AREA */}
+      <div className="flex-1 flex flex-col w-full min-h-screen relative overflow-x-hidden">
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden bg-slate-950 pb-20 md:pb-0">
-         <div className="md:hidden flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900 sticky top-0 z-40 shadow-md">
-            <div className="flex items-center gap-2">
-               <div className="bg-blue-600 p-1.5 rounded-lg"><Video size={20} className="text-white" /></div>
-               <h1 className="text-lg font-bold tracking-tight">IntellMeet</h1>
+        {/* MOBILE HEADER */}
+        {!showScheduleModal && !showTerminateModal && !showAddTaskModal && (
+          <div className="md:hidden flex items-center p-4 border-b border-white/10 bg-[#020617]/80 backdrop-blur-2xl sticky top-0 z-[130]">
+            <div className="flex items-center gap-4" onClick={() => setIsSidebarOpen(true)}>
+              <div className="bg-gradient-to-br from-teal-500 to-cyan-500 p-2 rounded-lg shadow-md"><Menu size={18} className="text-white" /></div>
+              <h1 className="text-base font-bold tracking-widest text-white uppercase">INTELLMEET</h1>
             </div>
-            <div className="flex items-center gap-3">
-               <button onClick={() => setActiveTab('profile')} className={`h-8 w-8 rounded-full flex items-center justify-center transition-colors border-2 ${activeTab === 'profile' ? 'border-blue-500' : 'border-transparent hover:border-slate-700'}`}>
-                 {user?.profilePic ? (
-                    <img src={user.profilePic} alt="Profile" className="h-full w-full rounded-full object-cover" />
-                 ) : (
-                    <div className="bg-slate-800 h-full w-full rounded-full flex items-center justify-center text-slate-300">
-                      <User size={16} />
+          </div>
+        )}
+
+        <div className="flex-1 w-full overflow-y-auto overflow-x-hidden relative z-10 transition-all duration-500" onMouseMove={handleMouseMove} onMouseEnter={() => setIsMouseOnMain(true)}>
+          {/* Animated Background Canvas */}
+          <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none bg-[#020617]">
+            <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-500 opacity-[0.15] blur-3xl animate-gradient"></div>
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_30%,rgba(34,211,238,0.15),transparent_40%),radial-gradient(circle_at_80%_70%,rgba(16,185,129,0.15),transparent_40%)]"></div>
+            <div className="absolute inset-0 opacity-[0.08] bg-[linear-gradient(rgba(255,255,255,0.2)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.2)_1px,transparent_1px)] bg-[size:40px_40px]"></div>
+            {isMouseOnMain && (<div className="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(200px circle at ${mouse.x - (window.innerWidth > 768 ? (isSidebarOpen ? 256 : 80) : 0)}px ${mouse.y}px, rgba(34,211,238,0.18), transparent 60%)` }} />)}
+          </div>
+          {isMouseOnMain && trailPoints.map((p, i) => (
+            <div key={i} className="absolute pointer-events-none rounded-full" style={{ left: p.x - (window.innerWidth > 768 ? (isSidebarOpen ? 256 : 80) : 0), top: p.y, width: 160 - i * 8, height: 160 - i * 8, transform: "translate(-50%, -50%)", background: "radial-gradient(circle, rgba(34,211,238,0.25), transparent 70%)", opacity: 0.7 - i * 0.06, filter: "blur(14px)", zIndex: 0 }} />
+          ))}
+
+          <div className="w-full max-w-[1400px] mx-auto p-4 sm:p-6 md:p-10 pb-24 md:pb-10 relative z-20">
+            {toast && (<div className={`fixed top-4 right-4 p-4 rounded-xl shadow-2xl z-[300] border-l-4 animate-in slide-in-from-top-4 fade-in ${toast.type === 'success' ? 'bg-slate-900 border-emerald-500 text-emerald-400' : 'bg-slate-900 border-red-500 text-red-400'}`}><p className="font-semibold text-sm">{toast.msg}</p></div>)}
+
+            {/* SCHEDULE MEETING MODAL */}
+            {showScheduleModal && (
+              <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 overflow-hidden">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setShowScheduleModal(false)}></div>
+                <div className="bg-white/[0.05] backdrop-blur-3xl border border-white/10 rounded-[2rem] w-full max-w-md p-6 sm:p-8 relative shadow-[0_0_80px_rgba(0,0,0,0.6)] overflow-hidden animate-in zoom-in-95 duration-300 z-10">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/10 blur-[50px] -mr-16 -mt-16"></div>
+                  <button onClick={() => setShowScheduleModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-white transition-colors z-10"><X size={20} /></button>
+                  <div className="mb-8">
+                    <div className="bg-gradient-to-br from-teal-500/20 to-cyan-500/20 border border-cyan-500/30 w-12 h-12 rounded-xl flex items-center justify-center mb-4"><Calendar size={24} className="text-cyan-400" /></div>
+                    <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white uppercase tracking-widest">Schedule Meeting</h2>
+                  </div>
+                  <form onSubmit={handleScheduleMeeting} className="space-y-5 relative">
+                    <input type="text" value={meetingTitle} onChange={(e) => setMeetingTitle(e.target.value)} placeholder="Meeting Title" className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-sm outline-none focus:border-cyan-400 transition-all placeholder:text-slate-600" required />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <input type="date" value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-sm outline-none focus:border-cyan-400 transition-all text-slate-300 [color-scheme:dark]" required />
+                      <input type="time" value={meetingTime} onChange={(e) => setMeetingTime(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-sm outline-none focus:border-cyan-400 transition-all text-slate-300 [color-scheme:dark]" required />
                     </div>
-                 )}
-               </button>
-               <button onClick={() => { logout(); navigate('/'); }} className="text-slate-400 hover:text-red-400 bg-slate-800 hover:bg-slate-700 p-2 rounded-lg transition-colors">
-                 <LogOut size={16} />
-               </button>
-            </div>
-         </div>
+                    <label className="flex items-center gap-4 cursor-pointer group w-fit">
+                      <div className="relative flex items-center">
+                        <input type="checkbox" checked={isWaitingRoom} onChange={(e) => setIsWaitingRoom(e.target.checked)} className="sr-only peer" />
+                        <div className="w-12 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500 peer-checked:after:bg-white shadow-inner"></div>
+                      </div>
+                      <span className="text-xs font-bold text-slate-400 group-hover:text-cyan-400 transition-colors uppercase tracking-widest">Enable Waiting Room</span>
+                    </label>
+                    <button type="submit" disabled={isScheduling} className="w-full bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600 text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-cyan-500/30 hover:scale-[1.02] active:scale-[0.97] flex justify-center items-center gap-2 tracking-widest uppercase text-xs">
+                      {isScheduling ? <Loader2 size={18} className="animate-spin" /> : "Confirm Schedule"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            )}
 
-         <div className="max-w-7xl mx-auto p-4 sm:p-6 md:p-8 mt-2 md:mt-4">
-            
+            {/* ADD MANUAL TASK MODAL */}
+            {showAddTaskModal && (
+              <div className="fixed inset-0 z-[250] flex items-center justify-center p-4 overflow-hidden">
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={() => setShowAddTaskModal(false)}></div>
+                <div className="bg-white/[0.05] backdrop-blur-3xl border border-white/10 rounded-[2rem] w-full max-w-md p-6 sm:p-8 relative shadow-[0_0_80px_rgba(0,0,0,0.6)] overflow-hidden animate-in zoom-in-95 duration-300 z-10">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/10 blur-[50px] -mr-16 -mt-16"></div>
+                  <button onClick={() => setShowAddTaskModal(false)} className="absolute top-6 right-6 text-slate-400 hover:text-white transition-colors z-10"><X size={20} /></button>
+                  <div className="mb-8">
+                    <div className="bg-gradient-to-br from-teal-500/20 to-cyan-500/20 border border-cyan-500/30 w-12 h-12 rounded-xl flex items-center justify-center mb-4"><CheckSquare size={24} className="text-cyan-400" /></div>
+                    <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-white uppercase tracking-widest">Assign New Task</h2>
+                  </div>
+                  <form onSubmit={handleCreateManualTask} className="space-y-5 relative">
+                    <input type="text" value={newTaskText} onChange={(e) => setNewTaskText(e.target.value)} placeholder="Task Description..." className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-sm outline-none focus:border-cyan-400 transition-all placeholder:text-slate-600" required />
+                    
+                    <div className="relative">
+                      <select value={newTaskMeetingId} onChange={(e) => setNewTaskMeetingId(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-sm outline-none focus:border-cyan-400 transition-all text-slate-300 appearance-none cursor-pointer" required>
+                         <option value="" disabled className="bg-slate-900 text-slate-500">Select Meeting to attach task</option>
+                         {scheduledMeetings.map(m => (
+                            <option key={m.roomId} value={m.roomId} className="bg-slate-900 text-white py-2">{m.title} ({m.date})</option>
+                         ))}
+                      </select>
+                      <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                    </div>
+
+                    <input type="text" value={newTaskAssignee} onChange={(e) => setNewTaskAssignee(e.target.value)} placeholder="Assignee Name (Optional)" className="w-full bg-black/40 border border-white/10 rounded-xl p-4 text-sm outline-none focus:border-cyan-400 transition-all placeholder:text-slate-600" />
+                    
+                    <button type="submit" disabled={isCreatingTask || !newTaskText || !newTaskMeetingId} className="w-full bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600 text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-cyan-500/30 hover:scale-[1.02] active:scale-[0.97] flex justify-center items-center gap-2 tracking-widest uppercase text-xs">
+                      {isCreatingTask ? <Loader2 size={18} className="animate-spin" /> : "Create Task"}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* DELETE ACCOUNT MODAL */}
+            {showTerminateModal && (
+              <div className="fixed inset-0 z-[250] flex items-center justify-center p-4">
+                <div className="absolute inset-0 bg-rose-950/40 backdrop-blur-xl" onClick={closeModal} />
+                <div ref={modalRef} role="dialog" aria-modal="true" className={`bg-rose-950/30 backdrop-blur-3xl border border-rose-500/30 rounded-[2.5rem] w-full max-w-sm p-8 sm:p-10 relative shadow-[0_0_100px_rgba(244,63,94,0.3)] overflow-hidden z-10 transition-all duration-200 ${isClosing ? 'opacity-0 scale-95' : 'opacity-100 scale-100'} ${isShaking ? 'animate-shake' : ''}`} onClick={(e) => e.stopPropagation()}>
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/10 blur-[50px] -mr-16 -mt-16" />
+                  <div className="text-center">
+                    <div className="bg-rose-500/20 w-16 h-16 sm:w-20 sm:h-20 rounded-full flex items-center justify-center mx-auto mb-6 border border-rose-500/30 text-rose-500"><AlertTriangle size={32} /></div>
+                    <h2 className="text-xl sm:text-2xl font-bold text-white uppercase tracking-tighter mb-4">DELETE ACCOUNT</h2>
+                    <p className="text-slate-400 text-sm leading-relaxed mb-8">This action cannot be undone. All your data will be permanently removed.</p>
+                    <input ref={firstInputRef} type="text" placeholder={`Type ${deleteHint} to confirm`} value={confirmDeleteText} onChange={(e) => setConfirmDeleteText(e.target.value)} className="w-full mb-6 bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white outline-none focus:border-rose-400" />
+                    <button onClick={() => { if (confirmDeleteText !== 'DELETE') { setIsShaking(true); setTimeout(() => setIsShaking(false), 400); return; } handleFinalWipe(); }} disabled={confirmDeleteText !== 'DELETE'} className={`w-full font-bold py-4 rounded-2xl transition-all uppercase text-xs tracking-widest active:scale-95 ${confirmDeleteText === 'DELETE' ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-rose-900/40 text-rose-300 cursor-not-allowed'}`}>Confirm Deletion</button>
+                    <button onClick={closeModal} className="w-full mt-3 bg-white/5 hover:bg-white/10 text-slate-300 font-bold py-4 rounded-2xl transition-all uppercase text-[10px] tracking-widest">Cancel</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* HOME TAB */}
             {activeTab === 'home' && (
-               <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
-                  <div className="flex items-center gap-4 mb-6 md:mb-8">
-                     <div className="h-14 w-14 md:h-16 md:w-16 rounded-full bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-xl md:text-2xl font-bold border-[3px] md:border-4 border-slate-800 shadow-xl uppercase overflow-hidden">
-                        {user?.profilePic ? (
-                           <img src={user.profilePic} alt="Profile" className="h-full w-full object-cover" />
-                        ) : (
-                           (user?.name || user?.firstName || 'U').charAt(0)
-                        )}
-                     </div>
-                     <div>
-                        <h2 className="text-xl sm:text-2xl md:text-3xl font-bold">Welcome, {user?.name || user?.firstName || 'User'}!</h2>
-                        <p className="text-slate-400 text-sm md:text-base">Ready for your next meeting?</p>
-                     </div>
+              <div className="space-y-10 animate-in fade-in slide-in-from-bottom-6 duration-700 w-full">
+                {/* Header */}
+                <div className="relative group mb-12">
+                  <div className="absolute -inset-x-20 -top-20 h-64 bg-cyan-500/5 blur-[120px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                  <div className="flex flex-col md:flex-row items-center md:items-start gap-8 lg:gap-10 relative z-10">
+                    <div className="relative flex-shrink-0">
+                      <div className="absolute inset-0 bg-cyan-500/20 rounded-full blur-2xl animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex items-center justify-center">
+                        <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-[2.5rem] rotate-45 group-hover:rotate-90 group-hover:border-cyan-400 transition-all duration-1000" />
+                        <div className="absolute inset-2 border border-white/10 rounded-[2rem] -rotate-12 group-hover:rotate-0 transition-all duration-700" />
+                        <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-3xl bg-[#020617] border border-white/20 overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.5)] z-10 relative">
+                          {user?.profilePic ? <img src={user.profilePic} className="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110" alt="Profile" /> : <div className="h-full w-full flex items-center justify-center bg-gradient-to-br from-slate-800 to-slate-950"><span className="text-2xl sm:text-3xl font-black text-cyan-500 font-mono">{(user?.name || 'U').charAt(0)}</span></div>}
+                          <div className="absolute inset-0 bg-gradient-to-tr from-cyan-500/10 via-transparent to-transparent opacity-50" />
+                        </div>
+                        <div className="absolute -bottom-1 -right-1 z-20">
+                          <div className="relative flex h-5 w-5 sm:h-6 sm:w-6">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-20"></span>
+                            <span className="relative inline-flex rounded-full h-full w-full bg-[#020617] border border-cyan-500 items-center justify-center"><div className="h-2 w-2 bg-cyan-400 rounded-full shadow-[0_0_8px_#22d3ee]" /></span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-center md:text-left pt-2 sm:pt-4 flex-1">
+                      <h2 className="text-3xl sm:text-5xl lg:text-7xl font-black tracking-tighter leading-tight mb-4 bg-gradient-to-r from-white via-cyan-100 to-teal-400 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(255,255,255,0.1)] uppercase">Welcome, {user?.name || 'User'}</h2>
+                      <p className="text-slate-400 text-sm md:text-base font-medium max-w-lg flex items-center gap-3 justify-center md:justify-start">
+                        <span className="font-mono text-cyan-500/50">[{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}]</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-10 flex items-center gap-4 opacity-50">
+                    <div className="h-[1px] flex-1 bg-gradient-to-r from-cyan-500/40 via-cyan-500/10 to-transparent" />
+                    <div className="flex gap-1">{[...Array(4)].map((_, i) => (<div key={i} className="h-1 w-1 rounded-full bg-slate-800" />))}</div>
+                  </div>
+                </div>
+
+                {/* Main Action Cards */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+                  {/* NEW MEETING CARD */}
+                  <div className="group relative bg-white/[0.04] backdrop-blur-3xl border border-white/10 p-6 sm:p-8 rounded-[2rem] transition-all duration-500 shadow-[0_0_80px_rgba(0,0,0,0.9)] overflow-hidden hover:-translate-y-2">
+                    <div className="absolute inset-0 rounded-[2rem] border border-cyan-500/20 group-hover:border-cyan-400/50 transition"></div>
+                    <div className="absolute top-0 right-0 w-48 sm:w-56 h-48 sm:h-56 bg-cyan-500/10 blur-[100px] group-hover:bg-cyan-500/20"></div>
+                    <div className="relative">
+                      <div className="bg-gradient-to-br from-teal-500/30 to-cyan-500/30 border border-cyan-400/40 p-4 rounded-2xl w-fit mb-8 shadow-[0_0_20px_rgba(34,211,238,0.3)]"><Video size={32} className="text-cyan-300" /></div>
+                      <h3 className="text-xl sm:text-2xl font-bold mb-3 uppercase tracking-[0.25em]"><span className="bg-gradient-to-r from-cyan-300 via-teal-300 to-cyan-400 bg-clip-text text-transparent drop-shadow-[0_0_8px_rgba(34,211,238,0.4)]">NEW MEETING</span></h3>
+                      <p className="text-slate-400 text-sm mb-8 leading-relaxed">Start an instant meeting with a secure code.</p>
+                      
+                      <label className="flex items-center gap-4 mb-6 cursor-pointer group w-fit">
+                        <div className="relative flex items-center">
+                          <input type="checkbox" checked={instantWaitingRoom} onChange={(e) => setInstantWaitingRoom(e.target.checked)} className="sr-only peer" />
+                          <div className="w-12 h-6 bg-white/10 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500 peer-checked:after:bg-white shadow-inner"></div>
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 group-hover:text-cyan-400 transition-colors uppercase tracking-widest">Enable Waiting Room</span>
+                      </label>
+
+                      <div className="space-y-5">
+                        <div className="flex justify-between bg-black/60 p-4 rounded-2xl border border-white/10 group/code transition-colors hover:border-cyan-500/30">
+                          <span className="text-xs sm:text-sm font-mono text-cyan-300 tracking-[0.2em]">{instantRoomCode}</span>
+                          <button onClick={() => copyToClipboard(instantRoomCode)} className="text-slate-500 hover:text-cyan-400 transition-colors"><Copy size={18} /></button>
+                        </div>
+                        <button onClick={startInstantMeeting} className="w-full bg-gradient-to-r from-teal-500 to-cyan-500 py-4 rounded-2xl font-black text-black tracking-widest uppercase shadow-lg shadow-cyan-500/20 hover:scale-[1.03] transition active:scale-95">Start Meeting</button>
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                     <div className="bg-slate-900 border border-slate-800 p-5 md:p-6 rounded-2xl flex flex-col justify-between shadow-lg">
-                        <div>
-                           <div className="bg-blue-500/10 border border-blue-500/20 w-12 h-12 rounded-xl flex items-center justify-center mb-4">
-                              <Video size={24} className="text-blue-400" />
-                           </div>
-                           <h3 className="text-lg md:text-xl font-bold mb-2">New Meeting</h3>
-                           <p className="text-slate-400 text-sm mb-4">Start an instant meeting with a secure code.</p>
-                           <label className="flex items-center gap-2 mb-4 text-sm text-slate-300 cursor-pointer">
-                             <input type="checkbox" checked={instantWaitingRoom} onChange={e => setInstantWaitingRoom(e.target.checked)} className="rounded text-blue-500 bg-slate-800 border-slate-700 w-4 h-4" />
-                             Enable Waiting Room
-                           </label>
-                        </div>
-                        <div className="space-y-3">
-                           <div className="flex items-center justify-between bg-slate-950 p-3 rounded-lg border border-slate-800">
-                              <span className="text-sm font-mono text-slate-300 font-bold tracking-wider">{instantRoomCode}</span>
-                              <div className="flex gap-1">
-                                 <button onClick={() => copyToClipboard(instantRoomCode, false)} className="p-2 text-slate-400 hover:bg-slate-800 hover:text-white rounded-md transition-colors"><Copy size={16}/></button>
-                                 <button onClick={() => copyToClipboard(`${window.location.origin}/meeting/${instantRoomCode}`, true)} className="p-2 text-slate-400 hover:bg-slate-800 hover:text-blue-400 rounded-md transition-colors"><LinkIcon size={16}/></button>
-                              </div>
-                           </div>
-                           <button onClick={startInstantMeeting} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition-colors shadow-md text-sm md:text-base">
-                              Start Instant Meeting
-                           </button>
-                        </div>
-                     </div>
-
-                     <div className="bg-slate-900 border border-slate-800 p-5 md:p-6 rounded-2xl flex flex-col justify-between shadow-lg">
-                        <div>
-                           <div className="bg-emerald-500/10 border border-emerald-500/20 w-12 h-12 rounded-xl flex items-center justify-center mb-4">
-                              <Users size={24} className="text-emerald-400" />
-                           </div>
-                           <h3 className="text-lg md:text-xl font-bold mb-2">Join Meeting</h3>
-                           <p className="text-slate-400 text-sm mb-6">Enter a room code or full link to join.</p>
-                        </div>
-                        <form onSubmit={handleJoin} className="space-y-3">
-                           <input type="text" placeholder="Enter Link or Code" value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg p-3 text-sm outline-none transition-all" />
-                           <button type="submit" disabled={!joinCode.trim()} className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-3 rounded-xl transition-colors shadow-md text-sm md:text-base">
-                              Join Meeting
-                           </button>
-                        </form>
-                     </div>
+                  {/* JOIN MEETING CARD */}
+                  <div className="group relative bg-white/[0.04] backdrop-blur-3xl border border-white/10 p-6 sm:p-8 rounded-[2rem] transition-all duration-500 shadow-[0_0_80px_rgba(0,0,0,0.9)] overflow-hidden hover:-translate-y-2">
+                    <div className="absolute inset-0 border border-emerald-500/20 rounded-[2rem] group-hover:border-emerald-400/50"></div>
+                    <div className="absolute top-0 right-0 w-48 sm:w-56 h-48 sm:h-56 bg-emerald-500/10 blur-[100px] group-hover:bg-emerald-500/20"></div>
+                    <div className="relative">
+                      <div className="bg-gradient-to-br from-emerald-500/30 to-teal-500/30 border border-emerald-400/40 p-4 rounded-2xl w-fit mb-8 shadow-[0_0_20px_rgba(16,185,129,0.3)]"><Users size={32} className="text-emerald-300" /></div>
+                      <h3 className="text-xl sm:text-2xl font-bold mb-3 uppercase tracking-[0.25em]"><span className="bg-gradient-to-r from-emerald-300 via-teal-300 to-emerald-400 bg-clip-text text-transparent drop-shadow-[0_0_8px_rgba(16,185,129,0.4)]">JOIN MEETING</span></h3>
+                      <p className="text-slate-400 text-sm mb-8 leading-relaxed">Join a meeting using an invite code.</p>
+                      <form onSubmit={handleJoin} className="space-y-5">
+                        <input value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="Enter Room Code" className="w-full bg-black/60 border border-white/10 rounded-2xl p-4 font-mono focus:outline-none focus:border-emerald-500/50 transition-colors" />
+                        <button type="submit" disabled={!joinCode.trim()} className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 py-4 rounded-2xl font-black text-black tracking-widest uppercase shadow-lg shadow-cyan-500/20 hover:scale-[1.03] transition active:scale-95 disabled:opacity-50 disabled:grayscale">Join Meeting</button>
+                      </form>
+                    </div>
                   </div>
-               </div>
+                </div>
+
+                {/* Stats Section */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 pt-4">
+                  {stats.map((item, i) => (
+                    <div key={i} className="group relative bg-white/[0.03] border border-white/10 backdrop-blur-2xl rounded-3xl p-5 sm:p-6 transition-all duration-500 hover:scale-[1.05] hover:border-white/20 hover:shadow-2xl overflow-hidden">
+                      <div className={`absolute top-0 right-0 w-20 sm:w-24 h-20 sm:h-24 ${item.bg} blur-[50px] -mr-12 -mt-12 transition-all duration-500 group-hover:scale-150`}></div>
+                      <div className="relative z-10 flex flex-col items-center md:items-start gap-4">
+                        <div className={`p-2.5 sm:p-3 rounded-2xl ${item.bg} border border-white/5 transition-transform duration-500 group-hover:rotate-[10deg] group-hover:scale-110 shadow-lg`}><item.icon size={20} className={item.color} /></div>
+                        <div className="text-center md:text-left">
+                          <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.2em] mb-1">{item.label}</p>
+                          <p className="text-xl sm:text-3xl font-bold text-white tracking-tight font-mono">{item.value}</p>
+                        </div>
+                      </div>
+                      <div className={`absolute bottom-0 left-0 h-[2px] w-0 bg-gradient-to-r from-transparent via-cyan-500 to-transparent transition-all duration-700 group-hover:w-full`}></div>
+                    </div>
+                  ))}
+                </div>
+
+              </div>
             )}
+
 
             {/* SCHEDULE TAB */}
             {activeTab === 'schedule' && (
-               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 mb-6 md:mb-8">
-                     <div>
-                        <h2 className="text-2xl md:text-3xl font-bold">Upcoming Meetings</h2>
-                        <p className="text-slate-400 text-sm mt-1">Plan and manage your schedule</p>
-                     </div>
-                     <button onClick={() => setShowScheduleModal(true)} className="w-full sm:w-auto flex justify-center items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2.5 rounded-lg font-medium transition-colors text-sm">
-                        <Plus size={18} /> Schedule New
-                     </button>
-                  </div>
-
-                  {isLoadingMeetings ? (
-                     <div className="flex justify-center p-12"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
-                  ) : upcomingMeetings.length > 0 ? (
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {upcomingMeetings.map(meeting => (
-                           <div key={meeting._id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm relative group">
-                              <h3 className="font-bold text-lg text-white mb-1 pr-16 truncate">{meeting.title}</h3>
-                              {meeting.isWaitingRoom && (
-                                <span className="absolute top-4 right-4 text-[10px] bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 px-2 py-1 rounded-md flex items-center">
-                                  <ShieldAlert size={12} className="mr-1"/> Waiting
-                                </span>
-                              )}
-                              <p className="text-sm text-slate-400 mb-4 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {formatDisplayTime(meeting.time)}</p>
-                              <div className="flex items-center justify-between bg-slate-950 p-2 rounded-lg border border-slate-800 mb-4">
-                                 <span className="text-xs font-mono text-slate-300 font-bold tracking-wider truncate mr-2">{meeting.roomId}</span>
-                                 <div className="flex gap-1 flex-shrink-0">
-                                    <button onClick={() => copyToClipboard(meeting.roomId, false)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white rounded-md transition-colors"><Copy size={14}/></button>
-                                    <button onClick={() => copyToClipboard(`${window.location.origin}/meeting/${meeting.roomId}`, true)} className="p-1.5 text-slate-400 hover:bg-slate-800 hover:text-blue-400 rounded-md transition-colors"><LinkIcon size={14}/></button>
-                                 </div>
-                              </div>
-                              <div className="flex gap-2">
-                                <button onClick={() => navigate(`/meeting/${meeting.roomId}`)} className="flex-1 bg-blue-600 hover:bg-blue-700 py-2 rounded-lg text-sm font-bold transition-colors">Start / Join</button>
-                                <button onClick={() => handleDeleteMeeting(meeting._id)} className="bg-slate-800 hover:bg-red-500/20 hover:text-red-400 border border-slate-700 p-2 rounded-lg transition-colors"><Trash2 size={18}/></button>
-                              </div>
-                           </div>
-                        ))}
-                     </div>
-                  ) : (
-                     <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-                        <div className="p-8 md:p-12 flex flex-col items-center justify-center text-center">
-                           <div className="bg-slate-800 p-4 rounded-full mb-4"><Calendar size={32} className="text-slate-400" /></div>
-                           <h3 className="text-lg font-bold mb-2">No upcoming meetings</h3>
-                           <p className="text-slate-400 text-sm max-w-sm mb-6">Schedule a new meeting with your team to get started.</p>
-                           <button onClick={() => setShowScheduleModal(true)} className="sm:hidden flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-xl font-medium transition-colors text-sm">
-                              <Plus size={18} /> Schedule Meeting
-                           </button>
+              <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 w-full">
+                {/* Header */}
+                <div className="relative group mb-8">
+                  <div className="absolute -inset-x-20 -top-20 h-64 bg-cyan-500/5 blur-[120px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                  <div className="flex flex-col md:flex-row items-center md:items-start gap-8 lg:gap-10 relative z-10">
+                    <div className="relative flex-shrink-0">
+                      <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex items-center justify-center">
+                        <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-[2.5rem] rotate-45 group-hover:rotate-90 group-hover:border-cyan-400 transition-all duration-1000" />
+                        <div className="absolute inset-2 border border-white/10 rounded-[2rem] -rotate-12 group-hover:rotate-0 transition-all duration-700" />
+                        <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-3xl bg-[#020617] border border-white/20 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)] z-10 relative"><Calendar size={32} className="text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" /></div>
+                      </div>
+                    </div>
+                    <div className="text-center md:text-left pt-2 sm:pt-4 flex-1">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                        <div>
+                          <h2 className="text-3xl sm:text-5xl font-black tracking-tighter leading-tight mb-2 bg-gradient-to-r from-white via-cyan-100 to-teal-400 bg-clip-text text-transparent">Upcoming Meetings</h2>
+                          <p className="text-slate-400 font-medium">Manage your scheduled meetings.</p>
                         </div>
-                     </div>
+                        <button onClick={() => setShowScheduleModal(true)} className="w-full sm:w-auto flex justify-center items-center gap-3 bg-white/5 hover:bg-cyan-500 hover:text-black border border-white/10 px-6 py-4 rounded-[1.8rem] font-bold transition-all shadow-xl uppercase tracking-[0.2em] text-[10px]">
+                          <Plus size={18} /> Schedule Meeting
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Suggestions & List */}
+                <div className="mb-10">
+                   <h3 className="text-xs text-slate-500 uppercase tracking-[0.2em] mb-4 font-bold flex items-center gap-3">Suggested Times</h3>
+                   <div className="flex flex-wrap gap-4">
+                     {["10:00 AM", "12:30 PM", "03:00 PM", "06:15 PM"].map((slot, i) => (
+                       <button key={i} onClick={() => { setMeetingTime(slot.split(' ')[0]); setShowScheduleModal(true); }} className="px-5 py-3 text-xs font-mono font-bold rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:border-cyan-400/50 hover:bg-cyan-500/10 hover:text-cyan-400 transition-all">{slot}</button>
+                     ))}
+                   </div>
+                </div>
+
+                <div className="mb-12">
+                  {upcomingMeetings.length === 0 ? (
+                    <div className="bg-white/[0.02] border border-white/5 rounded-[3rem] p-10 sm:p-20 backdrop-blur-3xl text-center">
+                      <Calendar size={64} className="text-slate-700 mx-auto mb-6" />
+                      <h3 className="text-xl sm:text-2xl font-bold mb-2 uppercase tracking-widest text-white">No Upcoming Meetings</h3>
+                      <p className="text-slate-500 text-sm max-w-sm mx-auto mb-8">You have no meetings scheduled. Start a new one to begin.</p>
+                      <button onClick={startInstantMeeting} className="bg-cyan-500 text-black px-8 py-3 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-cyan-400 transition">Start Instant Meeting</button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                      {upcomingMeetings.map((m) => (
+                        <div key={m._id} className="bg-white/[0.04] backdrop-blur-xl border border-white/10 p-6 sm:p-8 rounded-[2.5rem] group hover:border-cyan-500/40 transition-all hover:-translate-y-1">
+                          <div className="flex justify-between items-start mb-6">
+                            <h3 className="font-bold text-lg truncate pr-4 text-white uppercase">{m.title}</h3>
+                            {m.isWaitingRoom && <span className="text-[8px] bg-yellow-500/10 text-yellow-500 border border-yellow-500/20 px-2 py-1 rounded-full font-black uppercase">Wait</span>}
+                          </div>
+                          <div className="flex items-center gap-3 text-slate-400 text-xs mb-8"><Clock size={14} />{m.date} | {formatDisplayTime(m.time)}</div>
+                          <div className="flex gap-2">
+                             <button onClick={() => navigate(`/meeting/${m.roomId}`)} className="flex-1 bg-cyan-500 text-black font-black py-3 rounded-2xl text-[10px] uppercase tracking-widest hover:shadow-[0_0_20px_rgba(34,211,238,0.3)] transition-all">Join Meeting</button>
+                             <button onClick={() => handleDeleteMeeting(m._id)} className="p-3 bg-white/5 border border-white/10 rounded-2xl text-slate-500 hover:text-red-500 transition-all"><Trash2 size={18}/></button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
-               </div>
+                </div>
+
+                {/* Stats */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 pt-6 border-t border-white/10">
+                  <div className="bg-white/[0.03] backdrop-blur-2xl border border-white/10 rounded-[2rem] p-6 group hover:border-cyan-500/40 transition-all duration-500">
+                    <div className="flex items-center gap-5">
+                      <div className="p-4 rounded-2xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-lg"><Activity size={24} /></div>
+                      <div><p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold">Total Meetings</p><p className="text-2xl font-bold text-white font-mono">{scheduledMeetings.length}</p></div>
+                    </div>
+                  </div>
+                  <div className="bg-white/[0.03] backdrop-blur-2xl border border-white/10 rounded-[2rem] p-6 group hover:border-yellow-500/40 transition-all duration-500">
+                    <div className="flex items-center gap-5">
+                      <div className="p-4 rounded-2xl bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 shadow-lg"><Calendar size={24} /></div>
+                      <div><p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold">Upcoming</p><p className="text-2xl font-bold text-white font-mono">{upcomingMeetings.length}</p></div>
+                    </div>
+                  </div>
+                  <div className="bg-white/[0.03] backdrop-blur-2xl border border-white/10 rounded-[2rem] p-6 group hover:border-emerald-500/40 transition-all duration-500">
+                    <div className="flex items-center gap-5">
+                      <div className="p-4 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-lg"><CheckCircle2 size={24} /></div>
+                      <div><p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] font-bold">Completed</p><p className="text-2xl font-bold text-white font-mono">{scheduledMeetings.filter(m => m.status === 'Completed').length}</p></div>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             )}
 
             {/* HISTORY TAB */}
             {activeTab === 'history' && (
-               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-4xl">
-                  <h2 className="text-2xl md:text-3xl font-bold mb-6 md:mb-8">Meeting History</h2>
-                  {isLoadingMeetings ? (
-                     <div className="flex justify-center p-12"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
-                  ) : pastMeetings.length > 0 ? (
-                     <div className="grid grid-cols-1 gap-4">
-                        {pastMeetings
-                           .slice()
-                           .sort((a, b) => {
-                              if (a.date !== b.date) return b.date.localeCompare(a.date);
-                              return b.time.localeCompare(a.time);
-                           })
-                           .map(meeting => (
-                           <div key={meeting._id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 transition-all hover:border-slate-700">
-                              <div className="flex-1 w-full">
-                                <h3 className="font-bold text-base md:text-lg text-white mb-1 truncate">{meeting.title}</h3>
-                                <p className="text-xs md:text-sm text-slate-400 flex items-center gap-2"><Clock size={14}/> {meeting.date} at {formatDisplayTime(meeting.time)}</p>
-                              </div>
-                              <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                                {(meeting.status === 'Completed' || meeting.summary) && (
-                                    <button onClick={() => navigate(`/summary/${meeting.roomId}`)} className="flex-1 md:flex-none bg-purple-600/10 border border-purple-500/30 text-purple-400 hover:bg-purple-600 hover:text-white px-3 md:px-4 py-2 rounded-lg text-sm font-medium transition-colors flex justify-center items-center gap-2">
-                                      <FileText size={16} /> <span className="hidden sm:inline">View Report</span><span className="sm:hidden">Report</span>
-                                    </button>
-                                )}
-                                <button onClick={() => navigate(`/meeting/${meeting.roomId}`)} className="flex-1 md:flex-none bg-slate-800 border border-slate-700 hover:bg-blue-600 hover:border-blue-500 px-3 md:px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white">Rejoin</button>
-                                <button onClick={() => handleDeleteMeeting(meeting._id)} className="bg-slate-800 border border-slate-700 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 px-3 py-2 rounded-lg transition-colors"><Trash2 size={16}/></button>
-                              </div>
-                           </div>
-                        ))}
-                     </div>
-                  ) : (
-                     <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-                        <div className="p-8 md:p-12 flex flex-col items-center justify-center text-center">
-                           <div className="bg-slate-800 p-4 rounded-full mb-4"><History size={32} className="text-slate-400" /></div>
-                           <h3 className="text-lg font-bold mb-2">No Past Meetings</h3>
-                           <p className="text-slate-400 text-sm max-w-sm">Your meeting history is completely clean.</p>
+              <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 w-full">
+                <div className="relative group mb-12">
+                  <div className="absolute -inset-x-20 -top-20 h-64 bg-cyan-500/5 blur-[120px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                  <div className="flex flex-col md:flex-row items-center md:items-start gap-8 lg:gap-10 relative z-10">
+                    <div className="relative flex-shrink-0">
+                      <div className="absolute inset-0 bg-cyan-500/20 rounded-full blur-2xl animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex items-center justify-center">
+                        <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-[2.5rem] rotate-45 group-hover:rotate-90 group-hover:border-cyan-400 transition-all duration-1000" />
+                        <div className="absolute inset-2 border border-white/10 rounded-[2rem] -rotate-12 group-hover:rotate-0 transition-all duration-700" />
+                        <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-3xl bg-[#020617] border border-white/20 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)] z-10 relative"><History size={32} className="text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" /></div>
+                      </div>
+                    </div>
+                    <div className="text-center md:text-left pt-2 sm:pt-4 flex-1">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div>
+                          <h2 className="text-3xl sm:text-5xl font-black tracking-tighter leading-tight mb-2 bg-gradient-to-r from-white via-cyan-100 to-teal-400 bg-clip-text text-transparent">Meeting History</h2>
+                          <p className="text-slate-400 font-medium text-sm">View details and reports of past meetings.</p>
                         </div>
-                     </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col sm:flex-row items-center gap-4 w-full md:pl-[136px] mt-8 relative z-10">
+                    <div className="relative w-full sm:flex-1 max-w-md group/search">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within/search:text-cyan-400 transition-colors" size={18} />
+                      <input type="text" placeholder="Search records..." value={historySearch} onChange={(e) => { setHistorySearch(e.target.value); setHistoryPage(1); }} className="w-full bg-black/40 border border-white/10 rounded-2xl pl-12 pr-4 py-4 text-sm outline-none focus:border-cyan-500/50" />
+                    </div>
+                    <div className="flex bg-white/5 border border-white/10 p-1.5 rounded-[1.2rem] w-full sm:w-auto">
+                      {filterList.map((f) => (
+                        <button key={f} onClick={() => { setHistoryFilter(f); setHistoryPage(1); }} className={`px-4 py-2 text-[9px] font-bold uppercase tracking-widest rounded-lg transition-all ${historyFilter === f ? 'bg-cyan-500 text-black' : 'text-slate-500'}`}>{f}</button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {pagedHistory.length === 0 ? (
+                    <div className="bg-white/[0.02] border border-white/5 rounded-[3rem] p-10 sm:p-20 text-center uppercase tracking-widest text-slate-700 font-bold">No Records Found</div>
+                  ) : (
+                    <>
+                      {pagedHistory.map((m) => (
+                        <div key={m._id} className="group bg-white/[0.03] backdrop-blur-xl border border-white/10 p-5 sm:p-6 rounded-[2rem] flex flex-col md:flex-row justify-between items-center gap-4 hover:bg-white/[0.05] transition-all">
+                          <div className="flex items-center gap-4 w-full md:w-auto">
+                            <div className="h-12 w-12 rounded-2xl bg-black/40 flex items-center justify-center text-cyan-500 flex-shrink-0"><History size={20} /></div>
+                            <div className="flex-1 min-w-0">
+                              <h4 className="font-bold text-white truncate uppercase text-sm sm:text-base">{m.title}</h4>
+                              <p className="text-[10px] text-slate-500 font-mono uppercase">{m.date} | {m.roomId.split('-')[0]}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 w-full md:w-auto">
+                            {(m.status === 'Completed' || m.summary) && <button onClick={() => navigate(`/summary/${m.roomId}`)} className="flex-1 md:flex-none bg-purple-500/10 border border-purple-500/20 text-purple-400 px-4 py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-widest hover:bg-purple-600 hover:text-white transition-all">Summary</button>}
+                            <button onClick={() => navigate(`/meeting/${m.roomId}`)} className="flex-1 md:flex-none bg-white/5 border border-white/10 text-white px-4 py-2.5 rounded-xl text-[9px] font-bold uppercase tracking-widest hover:bg-cyan-500 hover:text-black transition-all">Rejoin</button>
+                            <button onClick={() => handleDeleteMeeting(m._id)} className="p-2.5 bg-white/5 border border-white/10 rounded-xl text-slate-600 hover:text-rose-500 transition-all"><Trash2 size={16} /></button>
+                          </div>
+                        </div>
+                      ))}
+
+                      <div className="flex flex-col sm:flex-row justify-center items-center gap-4 pt-8 relative z-10">
+                        {pastMeetingsFiltered.length > pagedHistory.length && (
+                          <button
+                            onClick={() => setHistoryPage(prev => prev + 1)}
+                            className="group flex items-center gap-3 bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500 hover:text-black text-cyan-400 px-10 py-4 rounded-2xl font-bold transition-all shadow-xl uppercase tracking-[0.2em] text-[10px] active:scale-95"
+                          >
+                            <Activity size={16} className="group-hover:animate-pulse" />
+                            Load More
+                            <ChevronDown size={16} />
+                          </button>
+                        )}
+                        {historyPage > 1 && (
+                          <button
+                            onClick={() => setHistoryPage(1)}
+                            className="group flex items-center gap-3 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-400 px-10 py-4 rounded-2xl font-bold transition-all uppercase tracking-[0.2em] text-[10px] active:scale-95"
+                          >
+                            Show Less
+                            <ChevronUp size={16} />
+                          </button>
+                        )}
+                      </div>
+                    </>
                   )}
-               </div>
+                </div>
+              </div>
             )}
 
             {/* TASKS TAB */}
             {activeTab === 'tasks' && (
-               <div className="animate-in fade-in slide-in-from-bottom-4 w-full">
-                  <div className="flex justify-between items-end mb-6 md:mb-8">
-                     <div>
-                        <h2 className="text-2xl md:text-3xl font-bold text-blue-400">AI Kanban Board</h2>
-                        <p className="text-slate-400 text-sm mt-1">Drag and drop action items extracted from your meetings</p>
-                     </div>
+              <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 w-full">
+                <div className="relative group mb-12">
+                  <div className="absolute -inset-x-20 -top-20 h-64 bg-cyan-500/5 blur-[120px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                  <div className="flex flex-col md:flex-row items-center md:items-start gap-8 lg:gap-10 relative z-10">
+                    <div className="relative flex-shrink-0">
+                      <div className="absolute inset-0 bg-cyan-500/20 rounded-full blur-2xl animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex items-center justify-center">
+                        <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-[2.5rem] rotate-45 group-hover:rotate-90 group-hover:border-cyan-400 transition-all duration-1000" />
+                        <div className="absolute inset-2 border border-white/10 rounded-[2rem] -rotate-12 group-hover:rotate-0 transition-all duration-700" />
+                        <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-3xl bg-[#020617] border border-white/20 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)] z-10 relative"><CheckSquare size={32} className="text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" /></div>
+                      </div>
+                    </div>
+                    <div className="text-center md:text-left pt-2 sm:pt-4 flex-1">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div>
+                          <h2 className="text-3xl sm:text-5xl font-black tracking-tighter leading-tight mb-2 bg-gradient-to-r from-white via-cyan-100 to-teal-400 bg-clip-text text-transparent">Task Board</h2>
+                          <div className="relative max-w-md mx-auto md:mx-0 mt-6 group/search">
+                            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-cyan-500/50" size={18} />
+                            <input type="text" placeholder="Search tasks..." value={taskSearch} onChange={(e) => setTaskSearch(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-2xl pl-12 pr-4 py-4 text-sm outline-none focus:border-cyan-500/50" />
+                          </div>
+                        </div>
+                        <button onClick={() => setShowAddTaskModal(true)} className="w-full sm:w-auto bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500 hover:text-black text-cyan-400 px-6 py-4 rounded-2xl font-bold uppercase text-[10px] tracking-widest flex items-center justify-center gap-3 transition-all">
+                          <Plus size={18} /> Add Task
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  {isLoadingMeetings ? <Loader2 className="animate-spin mx-auto text-blue-500" size={32} /> : (
-                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 items-start">
-                        
-                        <div 
-                          className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]"
-                          onDragOver={handleDragOver}
-                          onDrop={(e) => handleDrop(e, 'todo')}
-                        >
-                           <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2 pb-3 border-b border-slate-800 text-sm uppercase tracking-wider">
-                              <span className="w-2.5 h-2.5 rounded-full bg-red-500"></span> To Do ({todoTasks.length})
-                           </h3>
-                           <div className="space-y-3 overflow-y-auto pb-2 pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                              {todoTasks.length === 0 && <p className="text-sm text-slate-500 text-center mt-6 mb-6">No tasks pending</p>}
-                              {todoTasks.map(t => (
-                                 <div 
-                                   key={t.id} 
-                                   draggable 
-                                   onDragStart={(e) => handleDragStart(e, t.id, t.roomId)}
-                                   className="bg-slate-950 p-4 rounded-xl cursor-grab active:cursor-grabbing border border-slate-800 hover:border-slate-700 transition relative group"
-                                 >
-                                    <button onClick={() => handleDeleteTask(t.roomId, t.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-400 p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                                       <Trash2 size={14} />
-                                    </button>
-                                    <p className="text-sm text-slate-300 mb-4 mt-1 leading-relaxed pr-6">{t.text}</p>
-                                    <div className="flex justify-between items-center text-xs">
-                                       <span className="text-slate-500 truncate max-w-[100px]">{t.roomTitle}</span>
-                                       <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, 'in-progress')} className="bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white px-3 py-1.5 rounded-lg transition font-medium border border-slate-700 hover:border-blue-500 md:hidden">Start</button>
-                                    </div>
-                                 </div>
-                              ))}
-                           </div>
-                        </div>
+                </div>
 
-                        <div 
-                          className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]"
-                          onDragOver={handleDragOver}
-                          onDrop={(e) => handleDrop(e, 'in-progress')}
-                        >
-                           <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2 pb-3 border-b border-slate-800 text-sm uppercase tracking-wider">
-                              <span className="w-2.5 h-2.5 rounded-full bg-yellow-500"></span> In Progress ({inProgressTasks.length})
-                           </h3>
-                           <div className="space-y-3 overflow-y-auto pb-2 pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                              {inProgressTasks.length === 0 && <p className="text-sm text-slate-500 text-center mt-6 mb-6">Nothing in progress</p>}
-                              {inProgressTasks.map(t => (
-                                 <div 
-                                   key={t.id} 
-                                   draggable 
-                                   onDragStart={(e) => handleDragStart(e, t.id, t.roomId)}
-                                   className="bg-slate-950 p-4 rounded-xl cursor-grab active:cursor-grabbing border border-yellow-500/20 hover:border-yellow-500/40 transition relative group"
-                                 >
-                                    <button onClick={() => handleDeleteTask(t.roomId, t.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-400 p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                                       <Trash2 size={14} />
-                                    </button>
-                                    <p className="text-sm text-slate-300 mb-4 mt-1 leading-relaxed pr-6">{t.text}</p>
-                                    <div className="flex justify-between items-center text-xs">
-                                       <span className="text-slate-500 truncate max-w-[80px]">{t.roomTitle}</span>
-                                       <div className="flex gap-1.5 md:hidden">
-                                          <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, 'done')} className="bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white px-3 py-1.5 rounded-lg transition font-medium border border-emerald-500/30 hover:border-emerald-500">Done</button>
-                                       </div>
-                                    </div>
-                                 </div>
-                              ))}
-                           </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 items-start relative z-10">
+                  {[
+                    { title: 'To Do', color: 'bg-rose-500', key: 'todo' },
+                    { title: 'In Progress', color: 'bg-amber-500', key: 'in-progress' },
+                    { title: 'Done', color: 'bg-emerald-500', key: 'done' }
+                  ].map((col) => (
+                    <div key={col.key} onDragOver={handleDragOver} onDrop={(e) => handleDrop(e, col.key as any)} className="bg-white/[0.02] backdrop-blur-3xl border border-white/10 rounded-[2.5rem] p-6 flex flex-col max-h-[80vh] min-h-[400px]">
+                      <div className="mb-6 flex items-center justify-between pb-4 border-b border-white/5">
+                        <div className="flex items-center gap-3">
+                          <div className={`h-2 w-2 rounded-full ${col.color} animate-pulse shadow-[0_0_10px_currentColor]`} />
+                          <h3 className="font-bold text-[10px] uppercase tracking-[0.3em] text-slate-200">{col.title}</h3>
                         </div>
-
-                        <div 
-                          className="bg-slate-900 border border-slate-800 rounded-2xl p-4 md:p-5 flex flex-col max-h-[65vh]"
-                          onDragOver={handleDragOver}
-                          onDrop={(e) => handleDrop(e, 'done')}
-                        >
-                           <h3 className="font-bold text-slate-300 mb-4 flex items-center gap-2 pb-3 border-b border-slate-800 text-sm uppercase tracking-wider">
-                              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> Done ({doneTasks.length})
-                           </h3>
-                           <div className="space-y-3 overflow-y-auto pb-2 pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                              {doneTasks.length === 0 && <p className="text-sm text-slate-500 text-center mt-6 mb-6">No completed tasks yet</p>}
-                              {doneTasks.map(t => (
-                                 <div 
-                                   key={t.id} 
-                                   draggable 
-                                   onDragStart={(e) => handleDragStart(e, t.id, t.roomId)}
-                                   className="bg-slate-950 p-4 rounded-xl cursor-grab active:cursor-grabbing border border-emerald-500/10 opacity-75 hover:opacity-100 transition relative group"
-                                 >
-                                    <button onClick={() => handleDeleteTask(t.roomId, t.id)} className="absolute top-2 right-2 text-slate-600 hover:text-red-400 p-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
-                                       <Trash2 size={14} />
-                                    </button>
-                                    <p className="text-sm text-slate-500 mb-4 mt-1 line-through decoration-slate-700 pr-6">{t.text}</p>
-                                    <div className="flex justify-between items-center text-xs">
-                                       <span className="text-slate-600 truncate max-w-[100px]">{t.roomTitle}</span>
-                                    </div>
-                                 </div>
-                              ))}
-                           </div>
-                        </div>
-                     </div>
-                  )}
-               </div>
+                        <span className="text-[10px] text-slate-500 font-mono">[{filteredTasks.filter(t => t.status === col.key).length}]</span>
+                      </div>
+                      <div className="space-y-4 overflow-y-auto pr-2 pb-10 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                        {filteredTasks.filter(t => t.status === col.key).map((t) => (
+                          <div key={t.id} draggable onDragStart={(e) => handleDragStart(e, t.id, t.roomId)} className="bg-black/40 p-5 rounded-2xl border border-white/5 cursor-grab active:cursor-grabbing hover:border-cyan-500/40 transition-all group">
+                            <p className={`text-sm leading-relaxed mb-4 ${col.key === 'done' ? 'text-slate-500 line-through' : 'text-slate-200'}`}>{t.text}</p>
+                            <div className="flex justify-between items-center pt-4 border-t border-white/5">
+                              <span className="text-[8px] uppercase tracking-widest font-bold text-slate-500">{t.assigneeName || 'Unassigned'}</span>
+                              <div className="flex gap-2">
+                                <button onClick={() => handleDeleteTask(t.roomId, t.id)} className="text-slate-700 hover:text-rose-500 transition-colors"><Trash2 size={14} /></button>
+                                {col.key !== 'done' && <button onClick={() => handleUpdateTaskStatus(t.roomId, t.id, col.key === 'todo' ? 'in-progress' : 'done')} className="text-slate-700 hover:text-cyan-400 transition-colors"><ArrowRight size={14} /></button>}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             {/* ANALYTICS TAB */}
             {activeTab === 'analytics' && (
-               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 w-full min-w-0">
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6 md:mb-8">
-                     <div>
-                        <h2 className="text-2xl md:text-3xl font-bold text-slate-100">Insights & Analytics</h2>
-                        <p className="text-slate-400 text-sm mt-1">Track your productivity and meeting stats</p>
-                     </div>
-                     <button onClick={exportAnalyticsCSV} className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 shadow-lg">
-                        <Download size={18} /> Export CSV
-                     </button>
+              <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 w-full min-w-0">
+                <div className="relative group mb-12">
+                  <div className="absolute -inset-x-20 -top-20 h-64 bg-cyan-500/5 blur-[120px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                  <div className="flex flex-col md:flex-row items-center md:items-start gap-8 lg:gap-10 relative z-10">
+                    <div className="relative flex-shrink-0">
+                      <div className="absolute inset-0 bg-cyan-500/20 rounded-full blur-2xl animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex items-center justify-center">
+                        <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-[2.5rem] rotate-45 group-hover:rotate-90 group-hover:border-cyan-400 transition-all duration-1000" />
+                        <div className="absolute inset-2 border border-white/10 rounded-[2rem] -rotate-12 group-hover:rotate-0 transition-all duration-700" />
+                        <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-3xl bg-[#020617] border border-white/20 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)] z-10 relative"><BarChart3 size={32} className="text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" /></div>
+                      </div>
+                    </div>
+                    <div className="text-center md:text-left pt-2 sm:pt-4 flex-1">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+                        <div>
+                          <h2 className="text-3xl sm:text-5xl font-black tracking-tighter leading-tight mb-2 bg-gradient-to-r from-white via-cyan-100 to-teal-400 bg-clip-text text-transparent">Dashboard & Insights</h2>
+                          <p className="text-slate-400 font-medium text-sm">Track your meetings and task progress.</p>
+                        </div>
+                        <button onClick={exportAnalyticsCSV} className="w-full sm:w-auto bg-emerald-600/10 border border-emerald-500/30 hover:bg-emerald-600 hover:text-black text-emerald-400 px-8 py-4 rounded-2xl font-bold uppercase text-[10px] tracking-widest flex items-center justify-center gap-3 transition-all">
+                          <Download size={18} /> Export Data
+                        </button>
+                      </div>
+                    </div>
                   </div>
+                </div>
 
-                  {isLoadingMeetings ? <Loader2 className="animate-spin mx-auto text-blue-500" size={32} /> : (
-                     <div className="space-y-4 md:space-y-6 min-w-0">
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4 max-w-6xl">
-                           <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl flex flex-col justify-center items-center text-center shadow-sm">
-                              <Calendar size={20} className="text-blue-400 mb-2 md:mb-3" />
-                              <h4 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wider mb-1">Total Meetings</h4>
-                              <span className="text-2xl md:text-3xl font-bold text-white">{scheduledMeetings.length}</span>
-                           </div>
-                           <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl flex flex-col justify-center items-center text-center shadow-sm">
-                              <Target size={20} className="text-purple-400 mb-2 md:mb-3" />
-                              <h4 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wider mb-1">Total Tasks</h4>
-                              <span className="text-2xl md:text-3xl font-bold text-white">{allTasks.length}</span>
-                           </div>
-                           <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl flex flex-col justify-center items-center text-center shadow-sm">
-                              <CheckCircle2 size={20} className="text-emerald-400 mb-2 md:mb-3" />
-                              <h4 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wider mb-1">Tasks Done</h4>
-                              <span className="text-2xl md:text-3xl font-bold text-white">{doneTasks.length}</span>
-                           </div>
-                           <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl flex flex-col justify-center items-center text-center shadow-sm">
-                              <TrendingUp size={20} className="text-cyan-400 mb-2 md:mb-3" />
-                              <h4 className="text-slate-500 text-[10px] md:text-xs font-bold uppercase tracking-wider mb-1">Completion %</h4>
-                              <span className="text-2xl md:text-3xl font-bold text-cyan-400">
-                                 {allTasks.length > 0 ? Math.round((doneTasks.length / allTasks.length) * 100) : 0}%
-                              </span>
-                           </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 min-w-0 max-w-6xl">
-                           <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl shadow-sm min-w-0">
-                              <div className="flex items-center gap-2 mb-4 md:mb-6">
-                                 <Activity size={18} className="text-blue-400" />
-                                 <h3 className="text-base md:text-lg font-bold text-slate-200">Meeting Trends (7 Days)</h3>
-                              </div>
-                              {trendData.length > 0 ? (
-                                <div className="h-[220px] md:h-[260px] w-full min-w-0">
-                                  <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
-                                    <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                                      <defs>
-                                        <linearGradient id="colorMeetings" x1="0" y1="0" x2="0" y2="1">
-                                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3}/>
-                                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                                        </linearGradient>
-                                      </defs>
-                                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                                      <XAxis dataKey="name" stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} />
-                                      <YAxis stroke="#64748b" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
-                                      <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px', color: '#fff' }}/>
-                                      <Area type="monotone" dataKey="Meetings" stroke="#3b82f6" strokeWidth={3} fillOpacity={1} fill="url(#colorMeetings)" />
-                                    </AreaChart>
-                                  </ResponsiveContainer>
-                                </div>
-                              ) : (
-                                <div className="h-[220px] md:h-[260px] flex items-center justify-center text-slate-500 text-sm">No meeting data available</div>
-                              )}
-                           </div>
-
-                           <div className="bg-slate-900 border border-slate-800 p-4 md:p-6 rounded-2xl shadow-sm min-w-0">
-                              <h3 className="text-base md:text-lg font-bold mb-2 md:mb-4 text-slate-200">Task Status</h3>
-                              {pieChartData.length > 0 ? (
-                                <div className="h-[220px] md:h-[260px] w-full flex flex-col items-center justify-center min-w-0">
-                                  <ResponsiveContainer width="100%" height="80%" minWidth={1} minHeight={1}>
-                                    <PieChart>
-                                      <Pie data={pieChartData} cx="50%" cy="50%" innerRadius={45} outerRadius={70} paddingAngle={5} dataKey="value" stroke="none">
-                                        {pieChartData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} />)}
-                                      </Pie>
-                                      <RechartsTooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#1e293b', borderRadius: '8px' }} itemStyle={{ color: '#fff' }}/>
-                                    </PieChart>
-                                  </ResponsiveContainer>
-                                  <div className="flex flex-wrap gap-3 w-full justify-center mt-2 px-2 pb-2">
-                                    {pieChartData.map((entry, index) => (
-                                      <div key={index} className="flex items-center gap-1.5 text-xs">
-                                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }}></div>
-                                        <span className="text-slate-400">{entry.name} <span className="font-bold text-slate-200">({entry.value})</span></span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : (
-                                <div className="h-[220px] md:h-[260px] flex items-center justify-center text-slate-500 text-sm">No task data available</div>
-                              )}
-                           </div>
-                        </div>
-
-                        <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-sm overflow-hidden min-w-0 max-w-6xl">
-                           <div className="p-4 md:p-6 border-b border-slate-800">
-                              <h3 className="text-base md:text-lg font-bold text-slate-200">Recent Performance Table</h3>
-                           </div>
-                           <div className="overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                              <table className="w-full text-left border-collapse min-w-[600px]">
-                                 <thead>
-                                    <tr className="bg-slate-950 text-slate-500 text-xs uppercase tracking-wider">
-                                       <th className="p-4 font-semibold w-1/3">Meeting Title</th>
-                                       <th className="p-4 font-semibold">Date</th>
-                                       <th className="p-4 font-semibold text-center">Total Tasks</th>
-                                       <th className="p-4 font-semibold w-1/3">Task Progress</th>
-                                    </tr>
-                                 </thead>
-                                 <tbody className="divide-y divide-slate-800">
-                                    {meetingWiseData.length > 0 ? (
-                                      meetingWiseData.slice().reverse().map((meeting, idx) => (
-                                       <tr key={idx} className="hover:bg-slate-800/30 transition-colors">
-                                          <td className="p-4 text-sm font-medium text-slate-200">{meeting.fullTitle}</td>
-                                          <td className="p-4 text-sm text-slate-400">{meeting.date}</td>
-                                          <td className="p-4 text-sm text-center">
-                                             <span className="bg-slate-950 px-2.5 py-1 rounded-md text-slate-300 border border-slate-800">{meeting.total}</span>
-                                          </td>
-                                          <td className="p-4">
-                                             <div className="flex items-center gap-3">
-                                                <div className="w-full bg-slate-800 rounded-full h-2">
-                                                   <div 
-                                                     className={`h-2 rounded-full ${meeting.progress === 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} 
-                                                     style={{ width: `${meeting.progress}%` }}
-                                                   ></div>
-                                                </div>
-                                                <span className="text-xs font-bold text-slate-300 w-8">{meeting.progress}%</span>
-                                             </div>
-                                          </td>
-                                       </tr>
-                                      ))
-                                    ) : (
-                                      <tr><td colSpan={4} className="p-8 text-center text-slate-500 text-sm">No meeting performance data yet</td></tr>
-                                    )}
-                                 </tbody>
-                              </table>
-                           </div>
-                        </div>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-12 relative z-10">
+                   {[
+                     { label: 'Meetings', val: scheduledMeetings.length, icon: Calendar, color: 'text-cyan-400', bg: 'bg-cyan-500/10' },
+                     { label: 'Tasks', val: allTasks.length, icon: Target, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+                     { label: 'Completed', val: doneTasksCount, icon: CheckCircle2, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+                     { label: 'Efficiency', val: `${allTasks.length > 0 ? Math.round((doneTasksCount / allTasks.length) * 100) : 0}%`, icon: TrendingUp, color: 'text-amber-400', bg: 'bg-amber-500/10' }
+                   ].map((kpi, i) => (
+                     <div key={i} className="bg-white/[0.03] border border-white/10 p-6 rounded-[2rem] flex flex-col items-center text-center transition-all hover:border-white/20">
+                       <div className={`p-3 rounded-2xl ${kpi.bg} ${kpi.color} mb-4`}><kpi.icon size={20} /></div>
+                       <h4 className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-1">{kpi.label}</h4>
+                       <span className="text-xl sm:text-3xl font-bold font-mono text-white">{kpi.val}</span>
                      </div>
-                  )}
-               </div>
+                   ))}
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12 relative z-10">
+                   <div className="bg-white/[0.02] border border-white/10 p-6 sm:p-8 rounded-[2.5rem] h-[400px] flex flex-col group">
+                     <h3 className="text-[10px] font-bold mb-6 text-slate-500 uppercase tracking-[0.4em]">Meeting Trends</h3>
+                     <div className="flex-1 w-full relative">
+                       {trendData.length > 0 ? (
+                         <div className="absolute inset-0">
+                           <ResponsiveContainer width="100%" height="100%">
+                             <AreaChart data={trendData}>
+                               <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                               <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
+                               <YAxis stroke="#475569" fontSize={10} tickLine={false} axisLine={false} allowDecimals={false} />
+                               <RechartsTooltip contentStyle={{ backgroundColor: '#020617', border: '1px solid #ffffff10', borderRadius: '12px', fontSize: '10px' }} />
+                               <Area type="monotone" dataKey="Meetings" stroke="#22d3ee" strokeWidth={3} fill="#22d3ee" fillOpacity={0.2} isAnimationActive={false} />
+                             </AreaChart>
+                           </ResponsiveContainer>
+                         </div>
+                       ) : (
+                         <div className="h-full flex items-center justify-center text-slate-500 text-xs uppercase tracking-widest">No Trend Data</div>
+                       )}
+                     </div>
+                   </div>
+
+                   <div className="bg-white/[0.02] border border-white/10 p-6 sm:p-8 rounded-[2.5rem] h-[400px] flex flex-col">
+                     <h3 className="text-[10px] font-bold mb-6 text-slate-500 uppercase tracking-[0.4em]">Task Status</h3>
+                     <div className="flex-1 w-full relative">
+                       {pieChartData.length > 0 ? (
+                         <div className="absolute inset-0">
+                           <ResponsiveContainer width="100%" height="100%">
+                             <PieChart>
+                               <Pie data={pieChartData} cx="50%" cy="50%" innerRadius={60} outerRadius={90} paddingAngle={8} dataKey="value" stroke="none" isAnimationActive={false}>
+                                 {pieChartData.map((e, i) => <Cell key={i} fill={e.color} />)}
+                               </Pie>
+                               <RechartsTooltip contentStyle={{ backgroundColor: '#020617', border: 'none', borderRadius: '12px' }} itemStyle={{ color: '#fff' }} />
+                             </PieChart>
+                           </ResponsiveContainer>
+                         </div>
+                       ) : (
+                         <div className="h-full flex items-center justify-center text-slate-500 text-xs uppercase tracking-widest">No Task Data</div>
+                       )}
+                     </div>
+                   </div>
+                </div>
+
+                <div className="bg-white/[0.03] border border-white/10 rounded-[2.5rem] overflow-hidden relative z-10">
+                  <div className="overflow-x-auto custom-scrollbar">
+                    <table className="w-full text-left border-collapse min-w-[600px]">
+                      <thead>
+                        <tr className="bg-white/5 text-[9px] text-slate-500 uppercase font-bold tracking-[0.3em]">
+                          <th className="p-6">Meeting Title</th>
+                          <th className="p-6">Date</th>
+                          <th className="p-6 text-center">Total Tasks</th>
+                          <th className="p-6">Progress</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {meetingWiseData.length > 0 ? meetingWiseData.map((m, idx) => (
+                          <tr key={idx} className="hover:bg-white/[0.04] transition-all text-xs">
+                            <td className="p-6 font-bold uppercase tracking-widest text-slate-200">{m.fullTitle}</td>
+                            <td className="p-6 font-mono text-slate-500">{m.date}</td>
+                            <td className="p-6 text-center"><span className="bg-black/40 px-3 py-1.5 rounded-xl border border-white/5 text-cyan-300 font-mono text-[10px]">{m.total}</span></td>
+                            <td className="p-6">
+                              <div className="flex items-center gap-3">
+                                <div className="w-full bg-white/5 h-1 rounded-full"><div className={`h-full rounded-full ${m.progress === 100 ? 'bg-emerald-500' : 'bg-cyan-500'}`} style={{ width: `${m.progress}%` }} /></div>
+                                <span className="font-mono text-[10px] text-slate-400">{m.progress}%</span>
+                              </div>
+                            </td>
+                          </tr>
+                        )) : <tr><td colSpan={4} className="p-20 text-center text-slate-700 italic uppercase tracking-[0.4em] text-[10px] font-bold">No data available</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             )}
 
             {/* PROFILE TAB */}
             {activeTab === 'profile' && (
-               <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-lg">
-                  <h2 className="text-2xl md:text-3xl font-bold mb-6 md:mb-8">Profile Settings</h2>
-                  
-                  <div className="space-y-4 md:space-y-6">
-                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 md:p-6 shadow-sm">
-                        <h3 className="text-base md:text-lg font-bold mb-6 flex items-center gap-2"><Edit2 size={18} className="text-blue-400"/> Personal Information</h3>
-                        
-                        <div className="flex flex-col items-center sm:flex-row sm:items-start gap-6 mb-8 pb-8 border-b border-slate-800">
-                           <div className="relative group">
-                              <div className="h-24 w-24 rounded-full bg-slate-800 border-4 border-slate-700 flex items-center justify-center overflow-hidden shadow-xl">
-                                 {user?.profilePic ? (
-                                    <img src={user.profilePic} alt="Profile" className="h-full w-full object-cover" />
-                                 ) : (
-                                    <span className="text-3xl font-bold text-slate-300 uppercase">{(user?.name || 'U').charAt(0)}</span>
-                                 )}
-                              </div>
-                              <label className="absolute bottom-0 right-0 bg-blue-600 hover:bg-blue-700 p-2 rounded-full cursor-pointer shadow-lg transition-transform hover:scale-110">
-                                 {isUploadingAvatar ? <Loader2 size={16} className="text-white animate-spin" /> : <Edit2 size={14} className="text-white" />}
-                                 <input type="file" accept="image/png, image/jpeg, image/webp" className="hidden" onChange={handleAvatarUpload} disabled={isUploadingAvatar} />
-                              </label>
-                           </div>
-                           <div className="text-center sm:text-left flex-1">
-                              <p className="text-sm font-bold text-white mb-1">Profile Avatar</p>
-                              <p className="text-xs text-slate-400 mb-3">Upload a square image, max size 2MB. JPG or PNG allowed.</p>
-                           </div>
+              <div className="animate-in fade-in slide-in-from-bottom-6 duration-700 max-w-5xl mx-auto pb-10">
+                <div className="relative group mb-12">
+                  <div className="absolute -inset-x-20 -top-20 h-64 bg-cyan-500/5 blur-[120px] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+                  <div className="flex flex-col md:flex-row items-center md:items-start gap-8 lg:gap-10 relative z-10">
+                    <div className="relative flex-shrink-0">
+                      <div className="absolute inset-0 bg-cyan-500/20 rounded-full blur-2xl animate-pulse opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex items-center justify-center">
+                        <div className="absolute inset-0 border-2 border-cyan-500/30 rounded-[2.5rem] rotate-45 group-hover:rotate-90 group-hover:border-cyan-400 transition-all duration-1000" />
+                        <div className="absolute inset-2 border border-white/10 rounded-[2rem] -rotate-12 group-hover:rotate-0 transition-all duration-700" />
+                        <div className="h-16 w-16 sm:h-20 sm:w-20 rounded-3xl bg-[#020617] border border-white/20 flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.5)] z-10 relative"><User size={32} className="text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" /></div>
+                      </div>
+                    </div>
+                    <div className="text-center md:text-left pt-2 sm:pt-4 flex-1">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div>
+                          <h2 className="text-3xl sm:text-5xl font-black tracking-tighter leading-tight mb-2 bg-gradient-to-r from-white via-cyan-100 to-teal-400 bg-clip-text text-transparent uppercase">Profile Settings</h2>
+                          <p className="text-slate-500 mt-2 text-sm">Manage your personal information and password.</p>
                         </div>
-
-                        <div className="space-y-4">
-                           <div>
-                              <label className="block text-sm text-slate-400 mb-1">Display Name</label>
-                              <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:border-blue-500 outline-none text-white" />
-                           </div>
-                           <div>
-                              <label className="block text-sm text-slate-400 mb-1">Email</label>
-                              <input type="email" value={user?.email || ''} disabled className="w-full bg-slate-950/50 border border-slate-800/50 text-slate-500 cursor-not-allowed rounded-lg p-3 text-sm" />
-                           </div>
-                           <button 
-                             onClick={handleUpdateProfile} 
-                             disabled={isUpdatingProfile || newName === (user?.name || user?.firstName)}
-                             className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-6 py-2.5 rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2 w-full md:w-auto"
-                           >
-                             {isUpdatingProfile && <Loader2 size={16} className="animate-spin" />}
-                             Save Changes
-                           </button>
-                        </div>
-                     </div>
-
-                     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 md:p-6 shadow-sm">
-                        <h3 className="text-base md:text-lg font-bold mb-4 flex items-center gap-2"><Lock size={18} className="text-emerald-400"/> Change Password</h3>
-                        <div className="space-y-4">
-                           <div>
-                              <label className="block text-sm text-slate-400 mb-1">Current Password</label>
-                              <input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:border-emerald-500 outline-none text-white" />
-                           </div>
-                           <div>
-                              <label className="block text-sm text-slate-400 mb-1">New Password</label>
-                              <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm focus:border-emerald-500 outline-none text-white" />
-                           </div>
-                           <button 
-                             onClick={handleUpdatePassword} 
-                             disabled={isUpdatingPassword || !currentPassword || !newPassword}
-                             className="bg-slate-800 hover:bg-slate-700 text-white disabled:opacity-50 px-6 py-2.5 rounded-lg text-sm font-bold transition-colors border border-slate-700 flex items-center justify-center gap-2 w-full md:w-auto"
-                           >
-                             {isUpdatingPassword && <Loader2 size={16} className="animate-spin" />}
-                             Update Password
-                           </button>
-                        </div>
-                     </div>
+                      </div>
+                    </div>
                   </div>
-               </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 relative z-10">
+                  <div className="lg:col-span-2 space-y-8">
+                    <div className="bg-white/[0.03] border border-white/10 p-6 sm:p-10 rounded-[3rem] shadow-2xl relative overflow-hidden group/card transition-all duration-500 hover:border-white/20">
+                      <h3 className="text-xs font-bold mb-8 flex items-center gap-3 uppercase tracking-[0.4em] text-slate-400 group-hover/card:text-cyan-400 transition-colors"><User size={16} /> Personal Information</h3>
+                      <div className="flex flex-col sm:flex-row items-center gap-8 lg:gap-12 mb-10 pb-10 border-b border-white/5">
+                        <div className="relative group/avatar">
+                          <div className="h-32 w-32 sm:h-40 sm:w-40 rounded-[2.5rem] bg-black/60 border-2 border-white/10 flex items-center justify-center overflow-hidden transition-all duration-500 group-hover/avatar:border-cyan-500/50">
+                            {avatarPreview ? <img src={avatarPreview} className="h-full w-full object-cover" alt="Preview" /> : user?.profilePic ? <img src={user.profilePic} className="h-full w-full object-cover" alt="Avatar" /> : <span className="text-6xl font-black text-white opacity-20">{(user?.name || 'U').charAt(0)}</span>}
+                            {isUploadingAvatar && <div className="absolute inset-0 bg-[#020617]/80 flex items-center justify-center"><Loader2 className="animate-spin text-cyan-400" size={32} /></div>}
+                          </div>
+                          <label className="absolute -bottom-3 -right-3 bg-gradient-to-br from-teal-500 to-cyan-500 p-3 rounded-2xl cursor-pointer shadow-xl hover:scale-110 transition-all z-20">
+                            <Camera size={20} className="text-[#020617]" />
+                            <input type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} disabled={isUploadingAvatar} />
+                          </label>
+                        </div>
+                        <div className="flex-1 space-y-2 text-center sm:text-left">
+                          <p className="text-lg font-bold text-white uppercase tracking-widest">Profile Picture</p>
+                          <p className="text-xs text-slate-500 max-w-xs leading-relaxed">Update your display picture (Max 2MB).</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 lg:gap-8">
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Display Name</label>
+                          <div className="relative group/input">
+                            <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within/input:text-cyan-400 transition-colors" />
+                            <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-2xl p-4 pl-12 text-sm outline-none focus:border-cyan-500/50 text-white font-mono" placeholder="Enter Name..." />
+                          </div>
+                        </div>
+                        <div className="space-y-3 opacity-60">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Email Address</label>
+                          <div className="relative"><Mail size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" /><input type="email" value={user?.email || ''} disabled className="w-full bg-white/5 border border-white/5 rounded-2xl p-4 pl-12 text-sm text-slate-500 cursor-not-allowed font-mono" /></div>
+                        </div>
+                      </div>
+                      <button onClick={handleUpdateProfile} disabled={isUpdatingProfile || newName === user?.name} className="mt-10 w-full sm:w-auto bg-white/5 hover:bg-cyan-500 hover:text-black border border-white/10 text-white font-bold py-4 px-8 rounded-2xl transition-all shadow-xl uppercase text-[10px] tracking-[0.3em] flex items-center justify-center gap-4 disabled:opacity-20">{isUpdatingProfile ? <Loader2 size={18} className="animate-spin" /> : <ShieldCheck size={18} />} Save Changes</button>
+                    </div>
+
+                    
+                  <div className="space-y-8">
+                    <div className="bg-white/[0.03] backdrop-blur-3xl border border-white/10 p-6 sm:p-10 rounded-[3rem] shadow-2xl transition-all hover:border-white/20 group/crypto">
+                      <h3 className="text-xs font-bold mb-8 flex items-center gap-3 uppercase tracking-[0.4em] text-slate-400 group-hover/crypto:text-emerald-400 transition-colors"><Lock size={16} /> Password & Security</h3>
+                      
+                      {!isChangingPassword ? (
+                         <div className="flex flex-col items-center justify-center py-6">
+                            <div className="bg-white/5 p-4 rounded-full mb-4"><Lock size={24} className="text-slate-400"/></div>
+                            <p className="text-xs text-slate-400 text-center mb-6 max-w-xs leading-relaxed">Your password is encrypted. Update it regularly to maintain the security of your account.</p>
+                            <button onClick={() => setIsChangingPassword(true)} className="bg-white/5 hover:bg-emerald-500 hover:text-black border border-white/10 text-emerald-400 font-bold py-3 px-6 rounded-2xl transition-all text-[10px] uppercase tracking-widest flex items-center gap-3">
+                               Change Password
+                            </button>
+                         </div>
+                      ) : (
+                         <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500">
+                           <div className="space-y-2"><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest ml-1">Current Password</label><input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-sm focus:border-emerald-500/50 outline-none text-white font-mono" placeholder="••••••••" /></div>
+                           <div className="space-y-4">
+                             <div className="flex justify-between items-end px-1"><label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">New Password</label><span className={`text-[9px] font-bold uppercase tracking-widest ${passStrength.color.replace('bg-', 'text-')}`}>{passStrength.label}</span></div>
+                             <input type="password" value={newPassword} onChange={(e) => checkPasswordStrength(e.target.value)} className="w-full bg-black/40 border border-white/5 rounded-2xl p-4 text-sm focus:border-emerald-500/50 outline-none text-white font-mono" placeholder="Min. 6 chars" />
+                             <div className="flex gap-2 h-1.5 px-1">{[1, 2, 3].map(i => (<div key={i} className={`h-full flex-1 rounded-full transition-all duration-700 ${passStrength.score >= i ? passStrength.color : 'bg-white/5'}`} />))}</div>
+                           </div>
+                           <div className="flex gap-3 pt-2">
+                              <button onClick={() => { setIsChangingPassword(false); setCurrentPassword(''); setNewPassword(''); }} className="flex-1 bg-white/5 hover:bg-white/10 text-slate-400 font-bold py-4 rounded-2xl transition-all text-[10px] uppercase tracking-widest">Cancel</button>
+                              <button onClick={handleUpdatePassword} disabled={isUpdatingPassword || !currentPassword || newPassword.length < 6} className="flex-[2] bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500 hover:text-black text-emerald-400 font-bold py-4 rounded-2xl transition-all text-[10px] uppercase tracking-widest flex justify-center items-center gap-3 disabled:opacity-20">{isUpdatingPassword ? <Loader2 size={18} className="animate-spin" /> : <TrendingUp size={18} />} Update</button>
+                           </div>
+                         </div>
+                      )}
+                    </div>
+                  </div>
+
+                    <div className="bg-rose-500/[0.02] border border-rose-500/10 p-6 sm:p-8 rounded-[2.5rem] flex flex-col sm:flex-row justify-between items-center gap-6 group hover:bg-rose-500/[0.05] transition-all">
+                       <div className="flex items-center gap-5 text-center sm:text-left">
+                         <div className="bg-rose-500/10 p-4 rounded-2xl text-rose-500 group-hover:scale-110 transition-transform"><UserMinus size={24} /></div>
+                         <div><h4 className="text-sm font-bold text-white uppercase tracking-widest">Delete Account</h4><p className="text-xs text-slate-500">Permanently delete your account and data.</p></div>
+                       </div>
+                       <button onClick={() => setShowTerminateModal(true)} className="w-full sm:w-auto text-rose-500 text-[9px] font-bold uppercase tracking-[0.3em] hover:bg-rose-500 hover:text-white px-8 py-3 rounded-xl transition-all border border-rose-500/20">Delete Account</button>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
             )}
-         </div>
+          </div>
+        </div>
       </div>
     </div>
   );
