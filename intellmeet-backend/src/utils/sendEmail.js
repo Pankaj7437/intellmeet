@@ -12,7 +12,7 @@ const sendEmail = async (options) => {
     });
 
     const mailOptions = {
-        from: `IntellMeet Support <${process.env.EMAIL_USER}>`,
+        from: `IntellMeet Support <${process.env.EMAIL_FROM}>`,
         to: options.email,
         subject: options.subject,
         html: options.html
